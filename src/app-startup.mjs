@@ -36,14 +36,14 @@ export function appStartupPlist(script, configFile, env = process.env) {
 }
 
 export async function codexAppIsRunning() {
-  if (process.platform !== 'darwin') throw fail('JEV_APP_STARTUP_MACOS_ONLY');
+  if (process.platform !== 'darwin') throw fail('SKILLS_APP_STARTUP_MACOS_ONLY');
   try {
     const { stdout } = await run('/usr/bin/osascript', ['-l', 'JavaScript', '-e',
       'ObjC.import("AppKit"); $.NSRunningApplication.runningApplicationsWithBundleIdentifier("com.openai.codex").count > 0;'],
     { timeout: 3000, maxBuffer: 1024 });
-    if (!['true', 'false'].includes(stdout.trim())) throw fail('JEV_APP_STATE_UNAVAILABLE');
+    if (!['true', 'false'].includes(stdout.trim())) throw fail('SKILLS_APP_STATE_UNAVAILABLE');
     return stdout.trim() === 'true';
-  } catch { throw fail('JEV_APP_STATE_UNAVAILABLE'); }
+  } catch { throw fail('SKILLS_APP_STATE_UNAVAILABLE'); }
 }
 
 export async function startDashboardForApp(config, entry, { isRunning = codexAppIsRunning, ensure = ensureDashboard } = {}) {
@@ -52,11 +52,11 @@ export async function startDashboardForApp(config, entry, { isRunning = codexApp
 
 async function unload() {
   try { await run('/bin/launchctl', ['bootout', `gui/${process.getuid()}/${label}`], { timeout: 5000 }); }
-  catch (error) { if (![3, 113].includes(error.code)) throw fail('JEV_APP_STARTUP_UNAVAILABLE'); }
+  catch (error) { if (![3, 113].includes(error.code)) throw fail('SKILLS_APP_STARTUP_UNAVAILABLE'); }
 }
 
 export async function installAppStartup(entry, env = process.env) {
-  if (process.platform !== 'darwin') throw fail('JEV_APP_STARTUP_MACOS_ONLY');
+  if (process.platform !== 'darwin') throw fail('SKILLS_APP_STARTUP_MACOS_ONLY');
   const paths = appStartupPaths();
   const configFile = env.JEV_SKILL_ROUTER_CONFIG ? resolve(env.JEV_SKILL_ROUTER_CONFIG) : undefined;
   // Keep a standalone copy: Codex may remove versioned plugin caches on upgrade.
@@ -74,12 +74,12 @@ export async function installAppStartup(entry, env = process.env) {
   }
   await unload();
   try { await run('/bin/launchctl', ['bootstrap', `gui/${process.getuid()}`, paths.plist], { timeout: 5000 }); }
-  catch { throw fail('JEV_APP_STARTUP_UNAVAILABLE'); }
+  catch { throw fail('SKILLS_APP_STARTUP_UNAVAILABLE'); }
   return paths.plist;
 }
 
 export async function removeAppStartup() {
-  if (process.platform !== 'darwin') throw fail('JEV_APP_STARTUP_MACOS_ONLY');
+  if (process.platform !== 'darwin') throw fail('SKILLS_APP_STARTUP_MACOS_ONLY');
   await unload();
   for (const path of Object.values(appStartupPaths())) await rm(path, { force: true });
 }

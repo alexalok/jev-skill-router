@@ -7,39 +7,46 @@ const text = (value, limit) => typeof value === 'string' && value.length <= limi
 
 // Project only known fields: log readers must never expose added prompt/key fields.
 export function selectionRecord(value) {
-  if (!value || value.version !== 1 || !text(value.id, 100) || !value.id ||
+  const v2 = value?.version === 2;
+  const count = n => Number.isSafeInteger(n) && n >= 0;
+  const fraction = n => Number.isFinite(n) && n >= 0 && n <= 1;
+  if (v2 && (!['initial', 'search'].includes(value.source) || !text(value.reasoningEffort, 100) ||
+      !count(value.omittedCount) || (value.source === 'initial' ? value.threshold !== null : !fraction(value.threshold)) ||
+      (value.budget !== null && !(Object.keys(value.budget ?? {}).length === 1 &&
+        (count(value.budget?.tokens) || count(value.budget?.characters)))))) return null;
+  if (!value || (!v2 && value.version !== 1) || !text(value.id, 100) || !value.id ||
       !text(value.timestamp, 30) || !Number.isFinite(Date.parse(value.timestamp)) ||
       new Date(value.timestamp).toISOString() !== value.timestamp ||
       !text(value.cwd, 8192) || !isAbsolute(value.cwd) ||
       !(value.sessionId === null || text(value.sessionId, 200)) ||
-      !text(value.model, 100) || !/^jev-[\w.-]+$/u.test(value.model) ||
+      !text(value.model, 100) || (!v2 && (!/^jev-[\w.-]+$/u.test(value.model) ||
       !Number.isFinite(value.threshold) || value.threshold <= 0.5 || value.threshold > 1 ||
-      !Number.isInteger(value.maxSkills) || value.maxSkills < 1 || value.maxSkills > 20 ||
+      !Number.isInteger(value.maxSkills) || value.maxSkills < 1 || value.maxSkills > 20)) ||
       !(value.candidateCount === null || (Number.isInteger(value.candidateCount) && value.candidateCount >= 0)) ||
       !Number.isFinite(value.durationMs) || value.durationMs < 0 ||
-      !statuses.includes(value.status) || !Array.isArray(value.selected) || value.selected.length > value.maxSkills ||
-      (value.status === 'error' ? !/^JEV_[A-Z0-9_]{1,80}$/u.test(value.errorCode) : value.errorCode !== null)) return null;
+      (!statuses.includes(value.status) && !(v2 && value.status === 'unranked' && value.source === 'initial')) || !Array.isArray(value.selected) || (!v2 && value.selected.length > value.maxSkills) ||
+      (['error', 'unranked'].includes(value.status) ? !(v2 ? /^SKILLS_[A-Z0-9_]{1,80}$/u : /^JEV_[A-Z0-9_]{1,80}$/u).test(value.errorCode) : value.errorCode !== null)) return null;
   const selected = [];
   const paths = new Set();
   for (const skill of value.selected) {
     if (!skill || !text(skill.name, 512) || !skill.name || !text(skill.path, 8192) || !isAbsolute(skill.path) ||
-        !Number.isFinite(skill.probability) || skill.probability < value.threshold || skill.probability > 1 || paths.has(skill.path)) return null;
+        (value.status === 'unranked' ? skill.probability !== null : !fraction(skill.probability) || skill.probability < value.threshold) || paths.has(skill.path)) return null;
     paths.add(skill.path);
     selected.push({ name: skill.name, path: skill.path, probability: skill.probability });
   }
-  if ((value.status === 'selected') !== (selected.length > 0) ||
+  if ((value.status !== 'unranked' && (value.status === 'selected') !== (selected.length > 0)) ||
       (['selected', 'none'].includes(value.status) && !(value.candidateCount > 0)) ||
       (value.status === 'no_candidates' && value.candidateCount !== 0) ||
       (selected.length && selected.length > value.candidateCount)) return null;
   return Object.fromEntries(['version', 'id', 'timestamp', 'cwd', 'sessionId', 'model', 'threshold',
-    'maxSkills', 'candidateCount', 'durationMs', 'status', 'errorCode'].map(key => [key, value[key]]).concat([['selected', selected]]));
+    ...(v2 ? ['source','reasoningEffort','budget','omittedCount'] : ['maxSkills']), 'candidateCount', 'durationMs', 'status', 'errorCode'].map(key => [key, value[key]]).concat([['selected', selected]]));
 }
 
 export async function appendSelection(dataDir, event) {
   const record = selectionRecord(event);
-  if (!record) throw new Error('JEV_RECORD_INVALID');
+  if (!record) throw new Error('SKILLS_RECORD_INVALID');
   const line = Buffer.from(JSON.stringify(record) + '\n');
-  if (line.length > 128 * 1024) throw new Error('JEV_RECORD_TOO_LARGE');
+  if (line.length > 128 * 1024) throw new Error('SKILLS_RECORD_TOO_LARGE');
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   await appendFile(join(dataDir, record.timestamp.slice(0, 10) + '.jsonl'), line, { mode: 0o600 });
 }
@@ -61,7 +68,7 @@ export async function readSelections(dataDir, days, now = new Date()) {
   for (const name of files.filter(name => /^\d{4}-\d{2}-\d{2}\.jsonl$/u.test(name) && name.slice(0, 10) >= first && name.slice(0, 10) <= last).sort()) {
     const path = join(dataDir, name);
     bytes += (await stat(path)).size;
-    if (bytes > 64 * 1024 * 1024) throw Object.assign(new Error('JEV_HISTORY_TOO_LARGE'), { code: 'JEV_HISTORY_TOO_LARGE' });
+    if (bytes > 64 * 1024 * 1024) throw Object.assign(new Error('SKILLS_HISTORY_TOO_LARGE'), { code: 'SKILLS_HISTORY_TOO_LARGE' });
     for (const line of (await readFile(path, 'utf8')).split('\n')) {
       if (!line.trim()) continue;
       let record;
@@ -81,12 +88,13 @@ export function summarize(history, { days, project = '', search = '', status = '
   const skills = new Map();
   const trend = Array.from({ length: days }, (_, index) => ({
     date: new Date(Date.parse(history.first) + index * DAY).toISOString().slice(0, 10),
-    selected: 0, none: 0, no_candidates: 0, error: 0,
+    selected: 0, none: 0, no_candidates: 0, error: 0, unranked: 0,
   }));
   for (const event of events) {
     const day = trend.find(day => day.date === event.timestamp.slice(0, 10));
     if (day) day[event.status]++;
     if (['selected', 'none'].includes(event.status)) summary.evaluated++;
+    if (event.status === 'unranked') continue; // No model evaluation; preserve existing metric denominators.
     summary[{ selected: 'withSkills', none: 'noMatch', no_candidates: 'noCandidates', error: 'errors' }[event.status]]++;
     for (const skill of event.selected) {
       summary.selections++;

@@ -1,18 +1,19 @@
 {
   "name": "jev-skill-router",
-  "version": "0.4.0",
-  "description": "Route Codex skills with TypeSafe Jev and inspect local selection history in a web dashboard.",
+  "version": "0.5.0",
+  "description": "Rank initial skills with Codex and search the catalog as tasks change.",
   "author": {
     "name": "droid-Q"
   },
   "repository": "https://github.com/droid-Q/jev-skill-router",
   "interface": {
-    "displayName": "Jev Skill Router",
-    "shortDescription": "Jev skill routing with local selection analytics.",
-    "longDescription": "Selects relevant skills with TypeSafe Jev, records decisions locally, and starts a bilingual web dashboard when Codex opens using the included macOS startup helper, with task and message hooks as a fallback. Inspect selection rates, trends, and routing history. Explicit skill requests and existing permissions remain authoritative.",
+    "displayName": "Skill Router",
+    "shortDescription": "Codex skill routing and local history.",
+    "longDescription": "Rank initial skills with Codex and search the catalog as tasks change.",
     "developerName": "droid-Q",
     "category": "Productivity",
     "capabilities": [],
-    "defaultPrompt": "Help me configure Jev Skill Router."
-  }
+    "defaultPrompt": "Help me configure Skill Router."
+  },
+  "mcpServers": "./.mcp.json"
 }

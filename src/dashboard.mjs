@@ -46,7 +46,7 @@ export function startDashboard({ dataDir, recordingEnabled = true, routingEnable
     const search = query.get('search') ?? '';
     const status = query.get('status') ?? '';
     if (![1, 7, 30, 90].includes(days) || !Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > 1000000 ||
-        project.length > 8192 || search.length > 512 || !['', 'selected', 'none', 'no_candidates', 'error'].includes(status)) {
+        project.length > 8192 || search.length > 512 || !['', 'selected', 'none', 'no_candidates', 'error', 'unranked'].includes(status)) {
       return send(400, { error: 'Invalid filters.' });
     }
     try {
@@ -54,15 +54,15 @@ export function startDashboard({ dataDir, recordingEnabled = true, routingEnable
       send(200, { ...summarize(history, { days, project, search, status, page: pageNumber }),
         generatedAt: new Date().toISOString(), dataDir, recordingEnabled, routingEnabled, demo });
     } catch (error) {
-      send(error.code === 'JEV_HISTORY_TOO_LARGE' ? 413 : 500, {
-        error: error.code === 'JEV_HISTORY_TOO_LARGE' ? 'History exceeds 64 MiB. Choose a shorter period or archive older daily files.' : 'Cannot read local history. Check the data directory permissions.',
+      send(error.code === 'SKILLS_HISTORY_TOO_LARGE' ? 413 : 500, {
+        error: error.code === 'SKILLS_HISTORY_TOO_LARGE' ? 'History exceeds 64 MiB. Choose a shorter period or archive older daily files.' : 'Cannot read local history. Check the data directory permissions.',
       });
     }
   });
   server.requestTimeout = 10000;
   return new Promise((resolve, reject) => {
     const onError = error => reject(Object.assign(new Error('Dashboard could not start'), {
-      code: error.code === 'EADDRINUSE' ? 'JEV_DASHBOARD_PORT_IN_USE' : 'JEV_DASHBOARD_UNAVAILABLE',
+      code: error.code === 'EADDRINUSE' ? 'SKILLS_DASHBOARD_PORT_IN_USE' : 'SKILLS_DASHBOARD_UNAVAILABLE',
     }));
     server.once('error', onError);
     server.listen(port, '127.0.0.1', () => {
@@ -81,7 +81,7 @@ export function startDashboard({ dataDir, recordingEnabled = true, routingEnable
 // but only one can bind; the others exit without touching the running service.
 export async function ensureDashboard(config, entry) {
   if (!config.dashboardAutoStart) return;
-  const conflict = () => Object.assign(new Error('Dashboard port is occupied'), { code: 'JEV_DASHBOARD_PORT_IN_USE' });
+  const conflict = () => Object.assign(new Error('Dashboard port is occupied'), { code: 'SKILLS_DASHBOARD_PORT_IN_USE' });
   const ready = async () => {
     try {
       const response = await fetch(`http://127.0.0.1:${config.dashboardPort}/api/health`, {
@@ -115,5 +115,5 @@ export async function ensureDashboard(config, entry) {
     await delay(75);
     if (await ready()) return;
   }
-  throw Object.assign(new Error('Dashboard did not start'), { code: 'JEV_DASHBOARD_UNAVAILABLE' });
+  throw Object.assign(new Error('Dashboard did not start'), { code: 'SKILLS_DASHBOARD_UNAVAILABLE' });
 }
