@@ -1,15 +1,15 @@
 {
-  "description": "Use TypeSafe Jev to select optional skills before each Codex turn.",
+  "description": "Rank skills on the initial task and restore the list after compaction.",
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|resume",
+        "matcher": "startup|resume|compact",
         "hooks": [
           {
             "type": "command",
             "command": "node \"${PLUGIN_ROOT}/scripts/router.mjs\"",
             "timeout": 5,
-            "statusMessage": "Starting Jev dashboard"
+            "statusMessage": "Loading Skill Router"
           }
         ]
       }
@@ -20,8 +20,20 @@
           {
             "type": "command",
             "command": "node \"${PLUGIN_ROOT}/scripts/router.mjs\"",
-            "timeout": 30,
-            "statusMessage": "Selecting skills with Jev"
+            "timeout": 130,
+            "statusMessage": "Checking skill routing"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/scripts/router.mjs\"",
+            "timeout": 20,
+            "statusMessage": "Passing skills to subagent"
           }
         ]
       }

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { appendSelection } from '../src/records.mjs';
 import { startDashboard } from '../src/dashboard.mjs';
 
-// Documentation-only sample data. No configuration, Codex catalog, or Jev API is read.
+// Documentation-only sample data. No configuration, Codex catalog, or provider API is read.
 const port = Number(process.argv[2] ?? 4319);
 if (process.argv.length > 3 || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Usage: npm run dashboard:demo -- [port]');
 const dataDir = await mkdtemp(join(tmpdir(), 'jev-router-demo-'));
@@ -24,12 +24,12 @@ try {
         const skillIndexes = new Set([weights[id % weights.length], ...(id % 3 === 0 ? [weights[(id + 5) % weights.length]] : [])]);
         for (const skillIndex of skillIndexes) selected.push({ name: names[skillIndex], path: '/demo/skills/' + names[skillIndex].replace(':', '/') + '/SKILL.md', probability: (84 + (id + skillIndex) % 16) / 100 });
       }
-      await appendSelection(dataDir, { version: 1, id: 'demo-' + String(id).padStart(5, '0'),
+      await appendSelection(dataDir, { version: 2, id: 'demo-' + String(id).padStart(5, '0'),
         timestamp: new Date(now - day * 86400000 - (count - index) * 240000).toISOString(),
         cwd: '/demo/projects/' + projects[id % projects.length], sessionId: 'demo-session-' + Math.floor(id / 5),
-        model: 'jev-latest', threshold: 0.8, maxSkills: 3, candidateCount: status === 'no_candidates' ? 0 : 829,
+        model: 'gpt-6-luna', source: 'search', reasoningEffort: 'medium', budget: null, omittedCount: status === 'selected' ? 829 - selected.length : 0, threshold: 0.8, candidateCount: status === 'no_candidates' ? 0 : 829,
         durationMs: status === 'error' ? 12000 : 950 + (id * 137 % 2800), status,
-        errorCode: status === 'error' ? 'JEV_TIMEOUT' : null, selected });
+        errorCode: status === 'error' ? 'SKILLS_TIMEOUT' : null, selected });
     }
   }
   const server = await startDashboard({ dataDir, port, demo: true });

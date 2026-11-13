@@ -21,6 +21,13 @@ try {
   await appendSelection(dataDir, { ...base, id: 'fallback', status: 'error', errorCode: 'JEV_HTTP_429', selected: [] });
   await appendSelection(dataDir, { ...base, id: 'other-project', cwd: '/workspace/other', selected: [] , status: 'none' });
   await appendSelection(dataDir, { ...base, id: 'outside-window', timestamp: '2026-08-01T12:00:00.000Z' });
+  const v2 = { ...base, version:2, model:'codex-model', source:'initial', reasoningEffort:'medium', threshold:null,
+    omittedCount:8, budget:{tokens:100}, maxSkills:undefined };
+  assert.equal(selectionRecord(v2).omittedCount,8);
+  assert(!('maxSkills' in selectionRecord(v2)));
+  const fallback = { ...v2, status:'unranked', errorCode:'SKILLS_TIMEOUT', selected:v2.selected.map(s=>({...s,probability:null})) };
+  assert.equal(selectionRecord(fallback).selected[0].probability,null);
+  assert.equal(selectionRecord({...v2,source:'search',threshold:2}), null);
   const file = join(dataDir, '2026-09-19.jsonl');
   await appendFile(file, '{broken\n' + JSON.stringify({ ...base, selected: [{ ...base.selected[0], probability: '0.9' }] }) + '\n');
   const history = await readSelections(dataDir, 7, now);
@@ -62,7 +69,7 @@ try {
   await appendSelection(liveDir, { ...base, timestamp: new Date().toISOString(), selected: [{ ...base.selected[0], name: '<img src=x onerror=alert(1)>' }] });
   server = await startDashboard({ dataDir: liveDir, port: 0 });
   const origin = 'http://127.0.0.1:' + server.address().port;
-  await assert.rejects(startDashboard({ dataDir: liveDir, port: server.address().port }), { code: 'JEV_DASHBOARD_PORT_IN_USE' });
+  await assert.rejects(startDashboard({ dataDir: liveDir, port: server.address().port }), { code: 'SKILLS_DASHBOARD_PORT_IN_USE' });
   const response = await fetch(origin + '/api/analytics');
   assert.equal(response.status, 200);
   const api = await response.json();

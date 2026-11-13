@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "skill-router": {
+      "command": "node",
+      "args": [
+        "scripts/router.mjs",
+        "--mcp"
+      ],
+      "cwd": "."
+    }
+  }
+}
