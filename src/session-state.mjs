@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile, rename, unlink, stat, readdir } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, link, unlink, stat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export const sessionPath = (dir, session, agent) => typeof session === 'string' && session ?
@@ -30,29 +30,26 @@ export async function retireStale(path, cutoff, move = rename) {
     await unlink(tomb);
     return true;
   }
-  await rename(tomb, path);
+  try { await link(tomb, path); } catch (error) { if (error.code !== 'EEXIST') throw error; }
+  await unlink(tomb);
   return false;
 }
 
 export async function acquire(path, timeout) {
   if (!path) return async () => {};
   const lock = path.slice(0, -5) + '.lock', owner = randomUUID();
-  const create = () => writeFile(lock, owner, { flag: 'wx', mode: 0o600 });
-  try { await create(); } catch (error) {
+  // Hold the claim even for first creation: stale recovery may have moved the lock aside.
+  const claim = lock + '.takeover';
+  const claimTakeover = () => writeFile(claim, owner, { flag: 'wx', mode: 0o600 });
+  try { await claimTakeover(); } catch (error) {
     if (error.code !== 'EEXIST') throw error;
-    // Serialize stale takeover. Other contenders need not wait for this session.
-    const claim = lock + '.takeover';
-    const claimTakeover = () => writeFile(claim, owner, { flag: 'wx', mode: 0o600 });
-    try { await claimTakeover(); } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-      if (!await retireStale(claim, Date.now() - 5000)) return null;
-      try { await claimTakeover(); } catch (error) { if (error.code === 'EEXIST') return null; throw error; }
-    }
-    try {
-      if (!await retireStale(lock, Date.now() - timeout - 5000)) return null;
-      try { await create(); } catch (error) { if (error.code === 'EEXIST') return null; throw error; }
-    } finally { if (await readFile(claim, 'utf8').catch(() => null) === owner) await unlink(claim); }
+    if (!await retireStale(claim, Date.now() - 5000)) return null;
+    try { await claimTakeover(); } catch (error) { if (error.code === 'EEXIST') return null; throw error; }
   }
+  try {
+    if (!await retireStale(lock, Date.now() - timeout - 5000)) return null;
+    try { await writeFile(lock, owner, { flag: 'wx', mode: 0o600 }); } catch (error) { if (error.code === 'EEXIST') return null; throw error; }
+  } finally { if (await readFile(claim, 'utf8').catch(() => null) === owner) await unlink(claim); }
   return async () => { if (await readFile(lock, 'utf8').catch(() => null) === owner) await unlink(lock); };
 }
 

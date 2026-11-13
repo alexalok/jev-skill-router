@@ -225,6 +225,29 @@ test('stale cleanup restores a fresh replacement instead of deleting it',async t
   }
 });
 
+test('stale cleanup never overwrites a new entry when restoring',async t=>{
+  const f=await fixture(t),path=join(f.cwd,'key.lock');
+  await writeFile(path,'expired');await utimes(path,new Date(0),new Date(0));
+  let moved;
+  const retired=await retireStale(path,Date.now()-5000,async(from,tomb)=>{
+    await writeFile(from,'fresh owner');await rename(from,tomb);moved=tomb;
+    await writeFile(from,'new owner',{flag:'wx'});
+  });
+  assert.equal(retired,false);assert.equal(await readFile(path,'utf8'),'new owner');
+  await assert.rejects(stat(moved),{code:'ENOENT'});
+});
+
+test('missing lock cannot be acquired until takeover claim expires',async t=>{
+  const f=await fixture(t),path=join(f.cwd,'key.json'),lock=join(f.cwd,'key.lock'),claim=lock+'.takeover';
+  await writeFile(claim,'active');
+  assert.equal(await acquire(path,4000),null);
+  await assert.rejects(stat(lock),{code:'ENOENT'});
+  assert.equal(await readFile(claim,'utf8'),'active');
+  await utimes(claim,new Date(0),new Date(0));
+  const release=await acquire(path,4000);
+  assert.equal(typeof release,'function');await release();
+});
+
 test('subagents inherit the parent list; without one they get the unranked catalog',async t=>{
   const f=await fixture(t), sub={hook_event_name:'SubagentStart',session_id:'s',agent_id:'kid',agent_type:'default',cwd:f.cwd};
   const fallback=(await route(sub,f.config)).hookSpecificOutput;

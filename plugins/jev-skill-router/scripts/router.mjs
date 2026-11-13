@@ -7529,12 +7529,12 @@ var dashboard_page_default = String.raw`<!doctype html>
 <title>Codex — Skill observatory</title>
 <link rel="icon" href="data:,">
 <style>
-:root{--paper:#fefefe;--ink:#1e1e1e;--muted:#626262;--line:#cecece;--soft:#f2f2f0;--pink:#f386a1;--blue:#d9efff;--error:#92334f;--mono:"SFMono-Regular",Consolas,"Liberation Mono",monospace;--sans:"Helvetica Neue",Helvetica,"PingFang SC","Microsoft YaHei",sans-serif;color-scheme:light}
-:root[data-theme=dark]{--paper:#191919;--ink:#f3f3ee;--muted:#b6b6b2;--line:#494949;--soft:#252525;--pink:#f386a1;--blue:#5b7180;--error:#ffb3c7;color-scheme:dark}
+:root{--paper:#fefefe;--ink:#1e1e1e;--muted:#626262;--line:#cecece;--soft:#f2f2f0;--pink:#f386a1;--blue:#d9efff;--amber:#ab771e;--error:#92334f;--mono:"SFMono-Regular",Consolas,"Liberation Mono",monospace;--sans:"Helvetica Neue",Helvetica,"PingFang SC","Microsoft YaHei",sans-serif;color-scheme:light}
+:root[data-theme=dark]{--paper:#191919;--ink:#f3f3ee;--muted:#b6b6b2;--line:#494949;--soft:#252525;--pink:#f386a1;--blue:#5b7180;--amber:#e2b766;--error:#ffb3c7;color-scheme:dark}
 *{box-sizing:border-box}html{scroll-padding-top:24px}body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.5;text-wrap:pretty}button,input,select{font:inherit;color:inherit}button,select{cursor:pointer}button,a,summary,input,select{touch-action:manipulation}button{border:1px solid var(--line);background:var(--paper);padding:9px 16px;min-height:42px;transition:background .15s,color .15s}button:hover{background:var(--soft)}button:active{transform:translateY(1px)}button:disabled{opacity:.45;cursor:default}a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--ink);outline-offset:4px}button.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}button.primary:hover{opacity:.85}h1,h2,p{margin:0}h2{font-size:24px;font-weight:500;letter-spacing:-.7px}.mono,.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.05em}.eyebrow{text-transform:uppercase}.muted{color:var(--muted)}.hidden,[hidden]{display:none!important}.skip{position:absolute;left:16px;top:-70px;background:var(--ink);color:var(--paper);padding:12px;z-index:10}.skip:focus{top:12px}
 header{border-bottom:1px solid var(--line)}.nav{max-width:1440px;margin:auto;padding:17px 40px;display:flex;align-items:center;gap:36px}.brand{display:flex;align-items:center;gap:12px;white-space:nowrap}.wordmark{font-size:32px;line-height:1;font-weight:700;letter-spacing:-2px}.brand-label{border-left:1px solid var(--line);padding-left:12px;font-size:13px}.nav-links{display:flex;gap:28px;margin-left:40px;font-size:14px}.nav-tools{margin-left:auto;display:flex;gap:8px}.nav-tools button{font-family:var(--mono);font-size:12px;padding:7px 12px;min-height:36px}.active-lang{text-decoration:underline;text-underline-offset:4px}main{max-width:1440px;margin:auto;padding:0 40px 40px}.hero{display:grid;grid-template-columns:1fr 350px;gap:32px;padding:48px 0 38px;position:relative}.hero h1{font-size:clamp(42px,5.4vw,78px);font-weight:500;letter-spacing:-4px;line-height:1.05;margin:22px 0 20px}.hero p{max-width:640px;color:var(--muted);font-size:16px}.hero-art{position:relative;min-height:180px;overflow:hidden;align-self:stretch;border:1px solid var(--line);background:var(--blue)}.hero-art:before{content:"";position:absolute;inset:0;background-image:radial-gradient(var(--pink) 1.7px,transparent 1.7px);background-size:6px 6px;clip-path:polygon(0 0,74% 0,54% 20%,89% 34%,66% 54%,92% 76%,50% 100%,0 100%)}.hero-art:after{content:"";position:absolute;inset:12px;border:1px solid var(--paper);opacity:.8}.art-label{position:absolute;bottom:22px;left:22px;right:22px;z-index:1;background:var(--paper);border:1px solid var(--ink);box-shadow:3px 3px 0 var(--ink)}.art-label b{display:block;padding:5px 10px;background:var(--ink);color:var(--paper);font-family:var(--mono);font-size:11px;font-weight:400}.art-label span{display:block;padding:10px;font-size:20px;letter-spacing:-.5px}.demo-banner,.notice{border:1px solid var(--line);background:var(--soft);padding:12px 16px;margin-bottom:18px;font-size:13px}.demo-banner{background:var(--blue);border-color:var(--ink)}.notice.error{color:var(--error);border-color:var(--pink)}
 .toolbar{display:flex;gap:12px;align-items:flex-end;border-top:1px solid var(--ink);padding:20px 0}.field{display:grid;gap:6px;min-width:140px}.field label{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}input,select{border:1px solid var(--line);background:var(--paper);padding:9px 12px;min-height:42px;max-width:100%;border-radius:0}select{padding-right:30px}#project{max-width:360px}.toolbar-end{margin-left:auto;display:flex;align-items:center;gap:20px}.live{font-family:var(--mono);font-size:11px;display:flex;align-items:center;gap:7px}.live:before{content:"";width:6px;height:6px;background:var(--ink)}.live.off:before{background:var(--pink)}
-.stats{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--ink);margin-bottom:28px}.stat{padding:22px 24px;border-right:1px solid var(--line)}.stat:last-child{border:0}.stat-top{display:flex;justify-content:space-between;color:var(--muted)}.stat-number{font-size:48px;font-weight:500;line-height:1.15;letter-spacing:-2px;margin:12px 0 6px;font-variant-numeric:tabular-nums}.stat p{font-size:12px;color:var(--muted)}.panel{border:1px solid var(--line);padding:24px}.panel-heading{display:flex;align-items:start;justify-content:space-between;gap:20px;margin-bottom:18px}.panel-heading p{font-size:12px;color:var(--muted);margin-top:5px}.charts{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:20px;margin-bottom:38px}.legend{display:flex;gap:15px;flex-wrap:wrap;font-size:11px;color:var(--muted)}.legend span{display:flex;gap:6px;align-items:center}.swatch{display:inline-block;width:8px;height:8px;background:var(--ink)}.swatch.none{background:var(--blue);border:1px solid var(--line)}.swatch.error{background:var(--pink)}.swatch.no_candidates{background:var(--line)}.chart{height:130px;display:flex;gap:5px;align-items:stretch;border-bottom:1px solid var(--line);background:repeating-linear-gradient(to top,transparent 0,transparent calc(50% - 1px),var(--soft) calc(50% - 1px),var(--soft) 50%)}.bar{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;position:relative}.bar-stack{display:flex;flex-direction:column;justify-content:flex-end;min-height:1px}.bar-part{min-height:0;display:block}.bar-part.selected{background:var(--ink)}.bar-part.none{background:var(--blue)}.bar-part.error{background:var(--pink)}.bar-part.no_candidates{background:var(--line)}.bar:hover .bar-stack{opacity:.7}.chart-labels{display:flex;justify-content:space-between;color:var(--muted);margin-top:10px}.breakdown{display:grid;gap:14px}.breakdown-row{display:grid;grid-template-columns:1fr auto;align-items:center;font-size:13px}.breakdown-row span{display:flex;align-items:center;gap:8px}.breakdown-row strong{font-family:var(--mono);font-weight:400}.breakdown-note{border-top:1px solid var(--line);margin-top:18px;padding-top:12px;color:var(--muted);font-size:11px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--ink);margin-bottom:28px}.stat{padding:22px 24px;border-right:1px solid var(--line)}.stat:last-child{border:0}.stat-top{display:flex;justify-content:space-between;color:var(--muted)}.stat-number{font-size:48px;font-weight:500;line-height:1.15;letter-spacing:-2px;margin:12px 0 6px;font-variant-numeric:tabular-nums}.stat p{font-size:12px;color:var(--muted)}.panel{border:1px solid var(--line);padding:24px}.panel-heading{display:flex;align-items:start;justify-content:space-between;gap:20px;margin-bottom:18px}.panel-heading p{font-size:12px;color:var(--muted);margin-top:5px}.charts{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:20px;margin-bottom:38px}.legend{display:flex;gap:15px;flex-wrap:wrap;font-size:11px;color:var(--muted)}.legend span{display:flex;gap:6px;align-items:center}.swatch{display:inline-block;width:8px;height:8px;background:var(--ink)}.swatch.none{background:var(--blue);border:1px solid var(--line)}.swatch.error{background:var(--pink)}.swatch.no_candidates{background:var(--line)}.chart{height:130px;display:flex;gap:5px;align-items:stretch;border-bottom:1px solid var(--line);background:repeating-linear-gradient(to top,transparent 0,transparent calc(50% - 1px),var(--soft) calc(50% - 1px),var(--soft) 50%)}.bar{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;position:relative}.bar-stack{display:flex;flex-direction:column;justify-content:flex-end;min-height:1px}.bar-part{min-height:0;display:block}.swatch.unranked,.bar-part.unranked{background:var(--amber)}.bar-part.selected{background:var(--ink)}.bar-part.none{background:var(--blue)}.bar-part.error{background:var(--pink)}.bar-part.no_candidates{background:var(--line)}.bar:hover .bar-stack{opacity:.7}.chart-labels{display:flex;justify-content:space-between;color:var(--muted);margin-top:10px}.breakdown{display:grid;gap:14px}.breakdown-row{display:grid;grid-template-columns:1fr auto;align-items:center;font-size:13px}.breakdown-row span{display:flex;align-items:center;gap:8px}.breakdown-row strong{font-family:var(--mono);font-weight:400}.breakdown-note{border-top:1px solid var(--line);margin-top:18px;padding-top:12px;color:var(--muted);font-size:11px}
 .section{margin-top:32px}.section-heading{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:16px}.section-heading .eyebrow{color:var(--muted);margin-bottom:4px}.list-controls{display:flex;gap:10px;align-items:center}.list-controls input{width:220px}.table-wrap{overflow-x:auto;border-top:1px solid var(--ink);border-bottom:1px solid var(--line)}table{border-collapse:collapse;width:100%;text-align:left}th{font-family:var(--mono);font-size:10px;color:var(--muted);font-weight:400;text-transform:uppercase;letter-spacing:.04em;padding:12px 14px;background:var(--soft);white-space:nowrap}td{padding:13px 14px;border-top:1px solid var(--line);font-size:13px;vertical-align:middle}th:first-child,td:first-child{padding-left:0;background:var(--paper);width:38px;color:var(--muted)}th:nth-child(2),td:nth-child(2){padding-left:8px}tbody tr:hover{background:var(--soft)}.skill-name{font-size:14px;font-weight:500;padding:0;min-height:28px;background:none;border:0;text-align:left;overflow-wrap:anywhere}.skill-name:hover{background:none;text-decoration:underline}.skill-path{font-family:var(--mono);font-size:10px;color:var(--muted);overflow-wrap:anywhere;max-width:480px}.num{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}.rate-cell{min-width:150px}.rate{display:flex;align-items:center;gap:12px}.rate meter{width:80px;height:5px;border:0;border-radius:0;background:var(--soft)}meter::-webkit-meter-bar{background:var(--soft);border:0;border-radius:0}meter::-webkit-meter-optimum-value{background:var(--pink)}meter::-moz-meter-bar{background:var(--pink)}.section-foot{display:flex;justify-content:space-between;align-items:center;gap:18px;margin-top:12px;font-size:11px;color:var(--muted)}.section-foot button{min-height:30px;padding:3px 10px;font-size:11px}.empty{text-align:center;padding:38px 20px;color:var(--muted);font-size:14px;border:1px dashed var(--line)}.empty b{display:block;color:var(--ink);font-size:18px;font-weight:500;margin-bottom:5px}.empty code{display:block;margin-top:14px;overflow-wrap:anywhere;font-size:12px}
 .log-head,.log-entry summary{display:grid;grid-template-columns:160px minmax(110px,1fr) minmax(180px,2fr) 90px 115px 20px;gap:14px;align-items:center}.log-head{background:var(--soft);border-top:1px solid var(--ink);padding:12px 16px;font-family:var(--mono);font-size:10px;text-transform:uppercase;color:var(--muted)}.log-entry{border-bottom:1px solid var(--line)}.log-entry summary{padding:15px 16px;cursor:pointer;list-style:none;font-size:12px}.log-entry summary::-webkit-details-marker{display:none}.log-entry summary:hover{background:var(--soft)}.log-entry summary:after{content:"+";font-family:var(--mono);font-size:18px}.log-entry[open] summary:after{content:"−"}.log-entry[open]{background:var(--soft)}.log-time{font-family:var(--mono);font-size:11px;color:var(--muted)}.log-project{font-weight:500;overflow-wrap:anywhere}.tags{display:flex;gap:5px;flex-wrap:wrap}.tag{border:1px solid var(--line);padding:3px 7px;background:var(--paper);font-family:var(--mono);font-size:10px;overflow-wrap:anywhere;max-width:100%}.status{display:inline-flex;align-items:center;gap:6px;font-size:11px}.record-body{border-top:1px dashed var(--line);padding:18px 24px}.record-meta{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-bottom:18px}.record-meta dt{font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:4px}.record-meta dd{margin:0;font-size:12px;overflow-wrap:anywhere}.record-skills{display:grid;gap:10px}.record-skill{font-family:var(--mono);font-size:11px;overflow-wrap:anywhere}.record-skill b{font-size:12px;display:block;margin-bottom:3px}.record-error{color:var(--error);font-family:var(--mono);font-size:12px}.pagination{display:flex;gap:12px;align-items:center}.pagination button{min-height:36px;padding:5px 12px}.privacy{margin-top:40px;padding:20px 0;border-top:1px solid var(--ink);display:flex;justify-content:space-between;gap:25px;font-size:11px;color:var(--muted)}.privacy code{font-family:var(--mono);overflow-wrap:anywhere}.privacy p{max-width:520px}.footer-mark{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.08em}
 @media(min-width:1500px){.hero h1{font-size:78px}}@media(max-width:1000px){.nav{padding:16px 24px;gap:24px}.nav-links{margin-left:0;gap:16px}main{padding:0 24px 24px}.hero{grid-template-columns:1fr 250px}.hero h1{letter-spacing:-2px}.charts{grid-template-columns:minmax(0,1fr) 250px;gap:14px}.stat{padding:20px 16px}.stat-number{font-size:40px}.panel{padding:20px}.log-head,.log-entry summary{grid-template-columns:125px minmax(85px,1fr) minmax(150px,2fr) 70px 100px 12px;gap:8px}.rate-cell{min-width:125px}.rate meter{width:55px}.last-column{display:none}.skill-path{max-width:350px}}
@@ -8244,7 +8244,7 @@ async function rank(task, skills, client, settings, effective) {
 
 // src/session-state.mjs
 import { createHash as createHash2, randomUUID } from "node:crypto";
-import { mkdir as mkdir3, readFile as readFile4, writeFile as writeFile2, rename as rename2, unlink, stat as stat2, readdir as readdir2 } from "node:fs/promises";
+import { mkdir as mkdir3, readFile as readFile4, writeFile as writeFile2, rename as rename2, link, unlink, stat as stat2, readdir as readdir2 } from "node:fs/promises";
 import { join as join5 } from "node:path";
 var sessionPath = (dir, session, agent) => typeof session === "string" && session ? join5(dir, "sessions", createHash2("sha256").update(session + "\0" + (agent ?? "root")).digest("hex") + ".json") : null;
 async function cached(path) {
@@ -8278,43 +8278,42 @@ async function retireStale(path, cutoff, move = rename2) {
     await unlink(tomb);
     return true;
   }
-  await rename2(tomb, path);
+  try {
+    await link(tomb, path);
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  }
+  await unlink(tomb);
   return false;
 }
 async function acquire(path, timeout) {
   if (!path) return async () => {
   };
   const lock = path.slice(0, -5) + ".lock", owner = randomUUID();
-  const create = () => writeFile2(lock, owner, { flag: "wx", mode: 384 });
+  const claim = lock + ".takeover";
+  const claimTakeover = () => writeFile2(claim, owner, { flag: "wx", mode: 384 });
   try {
-    await create();
+    await claimTakeover();
   } catch (error) {
     if (error.code !== "EEXIST") throw error;
-    const claim = lock + ".takeover";
-    const claimTakeover = () => writeFile2(claim, owner, { flag: "wx", mode: 384 });
+    if (!await retireStale(claim, Date.now() - 5e3)) return null;
     try {
       await claimTakeover();
     } catch (error2) {
-      if (error2.code !== "EEXIST") throw error2;
-      if (!await retireStale(claim, Date.now() - 5e3)) return null;
-      try {
-        await claimTakeover();
-      } catch (error3) {
-        if (error3.code === "EEXIST") return null;
-        throw error3;
-      }
+      if (error2.code === "EEXIST") return null;
+      throw error2;
     }
+  }
+  try {
+    if (!await retireStale(lock, Date.now() - timeout - 5e3)) return null;
     try {
-      if (!await retireStale(lock, Date.now() - timeout - 5e3)) return null;
-      try {
-        await create();
-      } catch (error2) {
-        if (error2.code === "EEXIST") return null;
-        throw error2;
-      }
-    } finally {
-      if (await readFile4(claim, "utf8").catch(() => null) === owner) await unlink(claim);
+      await writeFile2(lock, owner, { flag: "wx", mode: 384 });
+    } catch (error) {
+      if (error.code === "EEXIST") return null;
+      throw error;
     }
+  } finally {
+    if (await readFile4(claim, "utf8").catch(() => null) === owner) await unlink(claim);
   }
   return async () => {
     if (await readFile4(lock, "utf8").catch(() => null) === owner) await unlink(lock);
