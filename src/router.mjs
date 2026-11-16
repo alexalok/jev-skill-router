@@ -194,35 +194,76 @@ async function createThread(input, config) {
 }
 
 
-// Codex fires SubagentStart, not UserPromptSubmit, for spawned agents: hand them the parent's list.
-async function subagentStart(input, config) {
-  let client;
+// Exact tool names only: Agent is a matcher alias, not a different argument schema.
+const spawnTools = new Set(['collaborationspawn_agent', 'spawn_agent']);
+const agentMarker = '<!-- skill-router:subagent:v1 ';
+const agentEnd = '<!-- /skill-router:subagent:v1 -->';
+const agentNote = 'This catalog was selected for your own task. Use it instead of any Skill Router catalog inherited from parent history.';
+const taskKey = (task, cwd, model) => createHash('sha256').update(JSON.stringify([task, cwd, model ?? null])).digest('hex');
+function attachedCatalog(message) {
+  if (typeof message !== 'string') return null;
+  message = message.trimEnd();
+  if (!message.endsWith('\n' + agentEnd)) return null;
+  const start = message.lastIndexOf('\n\n' + agentMarker);
+  if (start < 0) return null;
+  const headerEnd = message.indexOf(' -->\n', start);
+  if (headerEnd < 0) return null;
   try {
-    let block = await cached(sessionPath(config.dataDir, input.session_id));
-    if (block) block = 'Skill list inherited from the parent session; it was ranked for the parent\'s initial request, not for your task. If none of these skills fits your task, call the search_skills tool with your task description and working directory before starting work.\n' + block;
-    else {
-      if (typeof input.cwd !== 'string' || !isAbsolute(input.cwd)) return {};
-      const cwd = resolve(input.cwd);
-      client = await openClient({ ...config, timeoutMs: Math.min(config.timeoutMs, 15000) }, cwd);
-      const effective = await client.readConfig(cwd);
-      if (effective.skills?.include_instructions !== false) return {}; // Native list is present.
-      block = render(pinnedFirst(await eligibleSkills(await client.listSkills(cwd))), catalogBudget(effective, await contextWindow(effective, input.model)), 'no ranked list from the parent session').block;
-      await prepareSessions(config.dataDir);
+    const metadata = JSON.parse(message.slice(start + 2 + agentMarker.length, headerEnd));
+    const block = message.slice(headerEnd + 5, -agentEnd.length - 1);
+    if (!isObject(metadata) || typeof metadata.key !== 'string' || !block.startsWith(agentNote + '\n## Skills\n')) return null;
+    return { task: message.slice(0, start), block, metadata };
+  } catch { return null; }
+}
+
+// Rank before spawning; the child id is not known yet. Never use or update the
+// calling agent's cache, including when this is a nested spawn.
+async function spawnAgent(input, config) {
+  const args = input.tool_input;
+  if (!spawnTools.has(input.tool_name) || !isObject(args) ||
+      typeof args.message !== 'string' || !args.message.trim()) return {};
+  let client, event, output = {};
+  const started = performance.now();
+  try {
+    if (typeof input.cwd !== 'string' || !isAbsolute(input.cwd) || input.cwd.includes('\0') ||
+        (args.cwd !== undefined && (typeof args.cwd !== 'string' || !args.cwd.trim() || args.cwd.includes('\0'))))
+      throw fail('SKILLS_INPUT_INVALID');
+    const cwd = resolve(input.cwd, args.cwd ?? '.');
+    const model = args.model ?? input.model;
+    const attached = attachedCatalog(args.message);
+    const task = attached?.task ?? args.message;
+    const key = taskKey(task, cwd, model);
+    if (attached?.metadata.key === key) return {};
+    event = recordFor('subagent', cwd, input.session_id, config);
+    client = await openClient(config, cwd);
+    const effective = await guard(client, cwd);
+    const skills = await eligibleSkills(await client.listSkills(cwd));
+    const rendered = await rankedCatalog(task, skills, client, config, effective, model, event);
+    const metadata = JSON.stringify({ key, session: input.session_id ?? null, agent: input.agent_id ?? null });
+    const message = task + '\n\n' + agentMarker + metadata + ' -->\n' + agentNote + '\n' + rendered.block + '\n' + agentEnd;
+    output = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow',
+      updatedInput: { ...args, message } } };
+    if (event.errorCode) output.systemMessage = `Skill Router helper unavailable (${event.errorCode}); using catalog order.`;
+  } catch (error) {
+    if (event) event.errorCode = errorCode(error);
+    output = { systemMessage: `Skill Router unavailable for subagent (${errorCode(error)}); task message unchanged.` };
+  } finally {
+    client?.close();
+    if (event) {
+      try { await record(config, event, started); }
+      catch { output.systemMessage = [output.systemMessage, 'Skill Router history unavailable (SKILLS_RECORD_UNAVAILABLE).'].filter(Boolean).join(' '); }
     }
-    // A later prompt addressed to this agent must not rank and inject a second list.
-    await saveBlock(sessionPath(config.dataDir, input.session_id, input.agent_id), block).catch(() => {});
-    return context('SubagentStart', block);
-  } catch (error) { return { systemMessage: `Skill Router unavailable for subagent (${errorCode(error)}).` }; }
-  finally { client?.close(); }
+  }
+  return output;
 }
 
 export async function route(input, config) {
   if (!isObject(input) || typeof input.hook_event_name !== 'string') return block(fail('SKILLS_INPUT_INVALID'));
-  if (input.hook_event_name === 'PreToolUse') return createThread(input, config);
-  if (input.hook_event_name === 'SubagentStart') return subagentStart(input, config);
+  if (input.hook_event_name === 'PreToolUse')
+    return input.tool_name === 'mcp__codex_app__create_thread' ? createThread(input, config) : spawnAgent(input, config);
   if (input.hook_event_name === 'SessionStart' && input.source === 'compact') {
     try {
-      const saved = await cached(sessionPath(config.dataDir, input.session_id));
+      const saved = await cached(sessionPath(config.dataDir, input.session_id, input.agent_id));
       return saved ? context('SessionStart', saved) : {};
     } catch { return { systemMessage: 'Skill Router cache unavailable (SKILLS_CACHE_UNAVAILABLE).' }; }
   }
@@ -235,6 +276,24 @@ export async function route(input, config) {
     client = await openClient(config, cwd);
     effective = await guard(client, cwd);
     if (!input.prompt.trim()) return {};
+    const attached = attachedCatalog(input.prompt);
+    // Some clients also submit the rewritten opening message as a prompt. It is
+    // already visible: adopt only under an identity distinct from the caller.
+    if (attached) {
+      const childIdentity = typeof attached.metadata.session === 'string' && attached.metadata.session &&
+        typeof input.session_id === 'string' && input.session_id &&
+        (input.session_id !== attached.metadata.session ||
+          (typeof input.agent_id === 'string' && input.agent_id && input.agent_id !== attached.metadata.agent));
+      if (childIdentity) {
+        path = sessionPath(config.dataDir, input.session_id, input.agent_id);
+        if (path) {
+          await prepareSessions(config.dataDir);
+          release = await acquire(path, config.timeoutMs);
+          if (release && !await cached(path)) await saveBlock(path, attached.block);
+        }
+      }
+      return {};
+    }
     const threadAttached = attachedThreadCatalog(input.prompt);
     if (threadAttached) {
       if (typeof threadAttached.metadata.session === 'string' && threadAttached.metadata.session &&
@@ -321,7 +380,7 @@ async function main() {
       const output = stripInvalidatedThreadCatalog(input);
       return { ...output, systemMessage: errorCode(error) + (output.hookSpecificOutput ? '; stale catalog removed.' : '') };
     }
-    if (['SessionStart', 'SubagentStart'].includes(input?.hook_event_name)) return { systemMessage: errorCode(error) };
+    if (['SessionStart'].includes(input?.hook_event_name)) return { systemMessage: errorCode(error) };
     throw error;
   }
   if (['--install-app-startup', '--app-startup-check'].includes(process.argv[2])) {

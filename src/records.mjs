@@ -10,8 +10,8 @@ export function selectionRecord(value) {
   const v2 = value?.version === 2;
   const count = n => Number.isSafeInteger(n) && n >= 0;
   const fraction = n => Number.isFinite(n) && n >= 0 && n <= 1;
-  if (v2 && (!['initial', 'search', 'create_thread'].includes(value.source) || !text(value.reasoningEffort, 100) ||
-      !count(value.omittedCount) || (!fraction(value.threshold) && !(['initial', 'create_thread'].includes(value.source) && value.threshold === null)) ||
+  if (v2 && (!['initial', 'search', 'create_thread', 'subagent'].includes(value.source) || !text(value.reasoningEffort, 100) ||
+      !count(value.omittedCount) || (!fraction(value.threshold) && !(['initial', 'create_thread', 'subagent'].includes(value.source) && value.threshold === null)) ||
       (value.budget !== null && !(Object.keys(value.budget ?? {}).length === 1 &&
         (count(value.budget?.tokens) || count(value.budget?.characters)))))) return null;
   if (!value || (!v2 && value.version !== 1) || !text(value.id, 100) || !value.id ||
@@ -24,7 +24,7 @@ export function selectionRecord(value) {
       !Number.isInteger(value.maxSkills) || value.maxSkills < 1 || value.maxSkills > 20)) ||
       !(value.candidateCount === null || (Number.isInteger(value.candidateCount) && value.candidateCount >= 0)) ||
       !Number.isFinite(value.durationMs) || value.durationMs < 0 ||
-      (!statuses.includes(value.status) && !(v2 && value.status === 'unranked' && ['initial', 'create_thread'].includes(value.source))) || !Array.isArray(value.selected) || (!v2 && value.selected.length > value.maxSkills) ||
+      (!statuses.includes(value.status) && !(v2 && value.status === 'unranked' && ['initial', 'create_thread', 'subagent'].includes(value.source))) || !Array.isArray(value.selected) || (!v2 && value.selected.length > value.maxSkills) ||
       (['error', 'unranked'].includes(value.status) ? !(v2 ? /^SKILLS_[A-Z0-9_]{1,80}$/u : /^JEV_[A-Z0-9_]{1,80}$/u).test(value.errorCode) : value.errorCode !== null)) return null;
   const selected = [];
   const paths = new Set();
