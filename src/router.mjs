@@ -25,7 +25,7 @@ export async function loadConfig(env = process.env) {
   const config = {
     reasoningEffort: saved.reasoningEffort ?? 'medium',
     model: typeof saved.model === 'string' && saved.model.startsWith('jev-') ? 'gpt-6-luna' : saved.model ?? 'gpt-6-luna',
-    initialMinRelevance: saved.initialMinRelevance ?? 0.1,
+    initialMinRelevance: saved.initialMinRelevance ?? 0.8,
     searchMinRelevance: saved.searchMinRelevance ?? 0.8,
     searchMaxResults: saved.searchMaxResults ?? 10,
     timeoutMs: saved.timeoutMs ?? 45000,

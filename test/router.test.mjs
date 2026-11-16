@@ -18,7 +18,7 @@ async function fixture(t) {
     JEV_SKILL_ROUTER_DISABLED: '0', JEV_CODEX_BIN: fake };
   const settings = { model:'custom', reasoningEffort:'high', dashboardAutoStart:false, searchMaxResults:2, timeoutMs:4000 };
   await writeFile(configFile,JSON.stringify(settings));
-  const config = await loadConfig(env), catalog = [];
+  const config = { ...await loadConfig(env), initialMinRelevance: 0.1 }, catalog = [];
   for (let i=0;i<12;i++) {
     const root = join(cwd,'skill'+i), path=join(root,'SKILL.md');
     await mkdir(root); await writeFile(path,'PRIVATE_BODY');
@@ -40,7 +40,7 @@ test('config defaults, migration, bounds and invalid stdin',async t=>{
   const f=await fixture(t);
   await writeFile(f.configFile,JSON.stringify({model:'jev-latest',apiKey:'old',threshold:0,maxSkills:0}));
   const config=await loadConfig(f.env);
-  assert.deepEqual([config.model,config.reasoningEffort,config.initialMinRelevance,config.searchMaxResults,config.searchMinRelevance,config.timeoutMs],['gpt-6-luna','medium',0.1,10,0.8,45000]);
+  assert.deepEqual([config.model,config.reasoningEffort,config.initialMinRelevance,config.searchMaxResults,config.searchMinRelevance,config.timeoutMs],['gpt-6-luna','medium',0.8,10,0.8,45000]);
   assert.deepEqual(config.obsolete,['apiKey','threshold','maxSkills']); assert(!('apiKey' in config));
   assert.match(f.call('{')[0].reason,/SKILLS_INPUT_INVALID/);
   for (const bad of [{unexpected:true},{timeoutMs:999},{timeoutMs:120001},{searchMaxResults:51},{searchMinRelevance:-0.1},{initialMinRelevance:-0.1},{initialMinRelevance:1.01},{initialMinRelevance:'0.1'},{reasoningEffort:''},{dashboardPort:0},{dataDir:'relative'}]) {
