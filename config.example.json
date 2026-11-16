@@ -1,6 +1,7 @@
 {
   "model": "gpt-6-luna",
   "reasoningEffort": "medium",
+  "initialMinRelevance": 0.1,
   "searchMaxResults": 10,
   "searchMinRelevance": 0.8,
   "timeoutMs": 45000,

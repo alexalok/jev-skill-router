@@ -11,7 +11,7 @@ export function selectionRecord(value) {
   const count = n => Number.isSafeInteger(n) && n >= 0;
   const fraction = n => Number.isFinite(n) && n >= 0 && n <= 1;
   if (v2 && (!['initial', 'search'].includes(value.source) || !text(value.reasoningEffort, 100) ||
-      !count(value.omittedCount) || (value.source === 'initial' ? value.threshold !== null : !fraction(value.threshold)) ||
+      !count(value.omittedCount) || (!fraction(value.threshold) && !(value.source === 'initial' && value.threshold === null)) ||
       (value.budget !== null && !(Object.keys(value.budget ?? {}).length === 1 &&
         (count(value.budget?.tokens) || count(value.budget?.characters)))))) return null;
   if (!value || (!v2 && value.version !== 1) || !text(value.id, 100) || !value.id ||

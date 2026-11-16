@@ -30,7 +30,7 @@ The helper scores **names and short descriptions** against the task. The plugin 
 
 Image-only or whitespace-only prompts pass the guard without using the session’s initial ranking. For long text prompts, the helper scores the first 24,000 UTF-8 bytes (ending at a whole character); Codex receives the full prompt. Hook input supports up to 8 MiB of JSON.
 
-The main thread receives whole lines in descending relevance order: `- name: description (file: /path/SKILL.md)`. Injection has no relevance floor or count limit. Its budget follows Codex: `skills.max_context_tokens` (at most 10,000), otherwise 2% of the session model context window (read from the Codex model catalog), otherwise 8,000 characters. Each line costs approximately one token per four UTF-8 bytes. A note counts omitted skills. Explicit user requests still take precedence.
+The main thread receives whole lines in descending relevance order: `- name: description (file: /path/SKILL.md)`. Non-pinned skills must score at least `initialMinRelevance` (default 0.1); there is no count limit. If none qualify, the hook lists any pinned skills and suggests calling `search_skills`. Its budget follows Codex: `skills.max_context_tokens` (at most 10,000), otherwise 2% of the session model context window (read from the Codex model catalog), otherwise 8,000 characters. Each line costs approximately one token per four UTF-8 bytes. A note counts skills omitted for budget only. History counts all omitted skills, including those below threshold. Explicit user requests still take precedence.
 
 To list a skill in every initial injection regardless of relevance, set `policy.skill_router_always_injected_in_initial_turn: true` in its `agents/openai.yaml`. Such skills skip the helper, sit at the top of the list and are never dropped for budget (their cost still counts against it). The flag also lists a manual-only skill (`allow_implicit_invocation: false`); `search_skills` keeps skipping manual-only skills.
 
@@ -47,6 +47,7 @@ Optional file: `~/.config/jev-skill-router/config.json`. See [config.example.jso
 | model | gpt-6-luna | Model slug supported by your provider |
 | reasoningEffort | medium | Effort supported by that model |
 | searchMaxResults | 10 | Search results, 1–50 |
+| initialMinRelevance | 0.1 | Inclusive initial-turn threshold for non-pinned skills, 0–1 |
 | searchMinRelevance | 0.8 | Inclusive search threshold, 0–1 |
 | timeoutMs | 45000 | Shared app-server deadline, 1,000–120,000 ms |
 | codexBin | codex | Executable or absolute path |

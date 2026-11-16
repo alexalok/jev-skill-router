@@ -28,6 +28,7 @@ for await (const line of createInterface({ input: process.stdin })) {
     const skills = data.mode === 'late' && ++lists < 3 ? data.catalog.slice(0, 6) : data.catalog;
     ok({ data: data.mode === 'catalog' ? [] : [{ cwd: dir, skills }] });
   } else if (method === 'thread/start') {
+    appendFileSync(join(dir,'instructions'), p.baseInstructions + '\n');
     assert.equal(p.ephemeral, true); assert.equal(p.modelProvider, undefined);
     assert.equal(p.model, 'custom'); assert.equal(p.sandbox, 'read-only'); assert.deepEqual(readdirSync(p.cwd), []);
     assert.equal(p.approvalPolicy, 'never'); assert.equal(p.approvalsReviewer, 'user');
@@ -44,6 +45,7 @@ for await (const line of createInterface({ input: process.stdin })) {
     assert(!text.includes(dir)); assert(!text.includes('PRIVATE_BODY'));
     if (data.mode === 'long') assert.equal(JSON.parse(text.split('\n')[0].slice('Task (data): '.length)), 'x'+'😀'.repeat(5999));
     const scores = [...text.matchAll(/^s(\d+) \|/gmu)].map(m => ({ id:m[0].split(' ')[0], relevance: Math.min(1, Number(m[1])/10) }));
+    if (data.mode === 'zero') for (const row of scores) row.relevance=0;
     if (data.mode === 'hang') continue;
     if (data.mode === 'delay') await new Promise(r=>setTimeout(r,300));
     if (data.mode === 'request') { send({ id, method:'item/commandExecution/requestApproval', params:{} }); continue; }
