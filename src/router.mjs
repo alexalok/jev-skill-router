@@ -1,8 +1,9 @@
-import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { resolveProject } from './app-projects.mjs';
+import { mkdtemp, realpath, rm, readFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { appendSelection } from './records.mjs';
 import { ensureDashboard, startDashboard } from './dashboard.mjs';
 import { installAppStartup, removeAppStartup, startDashboardForApp } from './app-startup.mjs';
@@ -25,6 +26,7 @@ export async function loadConfig(env = process.env) {
   const config = {
     reasoningEffort: saved.reasoningEffort ?? 'medium',
     model: typeof saved.model === 'string' && saved.model.startsWith('jev-') ? 'gpt-6-luna' : saved.model ?? 'gpt-6-luna',
+    initialMinRelevance: saved.initialMinRelevance ?? 0.8,
     searchMinRelevance: saved.searchMinRelevance ?? 0.8,
     searchMaxResults: saved.searchMaxResults ?? 10,
     timeoutMs: saved.timeoutMs ?? 45000,
@@ -37,7 +39,7 @@ export async function loadConfig(env = process.env) {
   const obsolete = ['apiKey', 'threshold', 'maxSkills'].filter(key => Object.hasOwn(saved, key));
   if (Object.keys(saved).some(key => !Object.hasOwn(config, key) && !obsolete.includes(key)) ||
       ![config.model, config.reasoningEffort].every(v => typeof v === 'string' && v.trim() && v.length <= 100) ||
-      !Number.isFinite(config.searchMinRelevance) || config.searchMinRelevance < 0 || config.searchMinRelevance > 1 ||
+      ![config.initialMinRelevance, config.searchMinRelevance].every(v => Number.isFinite(v) && v >= 0 && v <= 1) ||
       !Number.isInteger(config.searchMaxResults) || config.searchMaxResults < 1 || config.searchMaxResults > 50 ||
       !Number.isInteger(config.timeoutMs) || config.timeoutMs < 1000 || config.timeoutMs > 120000 ||
       typeof config.codexBin !== 'string' || !config.codexBin.trim() ||
@@ -95,6 +97,92 @@ async function record(config, event, start) {
 }
 const selectedRecord = ({ name, path, probability = null }) => ({ name, path, probability });
 
+async function rankedCatalog(prompt, skills, client, config, effective, model, event) {
+  event.candidateCount = skills.length;
+  event.budget = catalogBudget(effective, await contextWindow(effective, model));
+  let ordered;
+  // Pinned skills skip the helper; history records them at relevance 1.
+  try {
+    const ranked = await rank(initialTask(prompt), skills.filter(s => !s.pinned), client, config, effective, config.initialMinRelevance);
+    ordered = [...skills.filter(s => s.pinned).map(s => ({ ...s, probability: 1 })), ...ranked];
+    event.threshold = config.initialMinRelevance;
+  } catch (error) { event.errorCode = errorCode(error); ordered = pinnedFirst(skills); }
+  const rendered = render(ordered, event.budget, event.errorCode && 'helper unavailable: ' + event.errorCode);
+  event.selected = rendered.selected.map(selectedRecord);
+  event.omittedCount = skills.length - event.selected.length;
+  event.status = event.errorCode ? 'unranked' : !skills.length ? 'no_candidates' : event.selected.length ? 'selected' : 'none';
+  return rendered;
+}
+
+const threadMarker = '<!-- skill-router:create-thread:v2 ';
+const threadEnd = '<!-- /skill-router:create-thread:v2 -->';
+function attachedThreadCatalog(prompt) {
+  if (typeof prompt !== 'string') return null;
+  prompt = prompt.trimEnd();
+  if (!prompt.endsWith('\n' + threadEnd)) return null;
+  const start = prompt.lastIndexOf('\n\n' + threadMarker);
+  if (start < 0) return null;
+  const end = prompt.indexOf(' -->\n', start);
+  if (end < 0) return null;
+  try {
+    const metadata = JSON.parse(prompt.slice(start + 2 + threadMarker.length, end));
+    const block = prompt.slice(end + 5, -threadEnd.length - 1);
+    if (typeof metadata.key !== 'string' || !block.startsWith('## Skills\n')) return null;
+    return { task: prompt.slice(0, start), metadata, block };
+  } catch { return null; }
+}
+
+// A create_thread opening turn can skip UserPromptSubmit. Route on the caller,
+// without borrowing its project config or writing its session cache.
+async function createThread(input, config) {
+  const args = input.tool_input;
+  if (input.tool_name !== 'mcp__codex_app__create_thread' || !isObject(args) ||
+      !isObject(args.target) || !['projectless', 'project'].includes(args.target.type) ||
+      typeof args.prompt !== 'string' || !args.prompt.trim()) return {};
+  if (args.target.type === 'project' && (typeof args.target.projectId !== 'string' ||
+      !['local', 'worktree'].includes(args.target.environment?.type ?? 'local'))) return {};
+  const attached = attachedThreadCatalog(args.prompt);
+  const task = attached?.task ?? args.prompt;
+  const key = createHash('sha256').update(JSON.stringify([task, args.target, args.model ?? null])).digest('hex');
+  if (attached?.metadata.key === key) return {};
+  let temporary, cwd, client, event, output = {};
+  const started = performance.now();
+  try {
+    // Destination directory does not exist yet. A neutral cwd discovers global
+    // and plugin skills without pretending the parent's repository is the target.
+    cwd = args.target.type === 'project' ? await resolveProject(args.target, input) :
+      (temporary = await realpath(await mkdtemp(join(tmpdir(), 'skill-router-thread-'))));
+    event = recordFor('create_thread', cwd, input.session_id, config);
+    client = await openClient(config, cwd);
+    const effective = await guard(client, cwd);
+    const catalog = await client.listSkills(cwd);
+    const skills = await eligibleSkills({ ...catalog,
+      skills: args.target.type === 'project' ? catalog.skills :
+        catalog.skills.filter(skill => ['user', 'system', 'admin'].includes(skill.scope)) });
+    const rendered = await rankedCatalog(task, skills, client, config, effective, args.model, event);
+    if (args.target.environment?.type === 'worktree') {
+      rendered.block = rendered.block.replace('These are the skills available for this task',
+        'These are source-checkout skill candidates, not verified destination contents, selected for this task');
+      rendered.block += '\n\nSkills were taken from the main worktree and, in rare cases, may have drifted from this worktree.';
+    }
+    output = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow',
+      updatedInput: { ...args, prompt: task + '\n\n' + threadMarker + JSON.stringify({ key, session: input.session_id ?? null }) + ' -->\n' + rendered.block + '\n' + threadEnd } } };
+    if (event.errorCode) output.systemMessage = `Skill Router helper unavailable (${event.errorCode}); using catalog order.`;
+  } catch (error) {
+    if (event) event.errorCode = errorCode(error);
+    output = { systemMessage: `Skill Router unavailable for new thread (${errorCode(error)}); opening prompt unchanged.` };
+  } finally {
+    client?.close();
+    if (event) {
+      try { await record(config, event, started); }
+      catch { output.systemMessage = [output.systemMessage, 'Skill Router history unavailable (SKILLS_RECORD_UNAVAILABLE).'].filter(Boolean).join(' '); }
+    }
+    if (temporary) await rm(temporary, { recursive: true, force: true }).catch(() => {});
+  }
+  return output;
+}
+
+
 // Codex fires SubagentStart, not UserPromptSubmit, for spawned agents: hand them the parent's list.
 async function subagentStart(input, config) {
   let client;
@@ -119,6 +207,7 @@ async function subagentStart(input, config) {
 
 export async function route(input, config) {
   if (!isObject(input) || typeof input.hook_event_name !== 'string') return block(fail('SKILLS_INPUT_INVALID'));
+  if (input.hook_event_name === 'PreToolUse') return createThread(input, config);
   if (input.hook_event_name === 'SubagentStart') return subagentStart(input, config);
   if (input.hook_event_name === 'SessionStart' && input.source === 'compact') {
     try {
@@ -135,6 +224,20 @@ export async function route(input, config) {
     client = await openClient(config, cwd);
     effective = await guard(client, cwd);
     if (!input.prompt.trim()) return {};
+    const threadAttached = attachedThreadCatalog(input.prompt);
+    if (threadAttached) {
+      if (typeof threadAttached.metadata.session === 'string' && threadAttached.metadata.session &&
+          typeof input.session_id === 'string' && input.session_id && input.session_id !== threadAttached.metadata.session) {
+        path = sessionPath(config.dataDir, input.session_id, input.agent_id);
+        if (path) {
+          await prepareSessions(config.dataDir);
+          release = await acquire(path, config.timeoutMs);
+          if (release && !await cached(path)) await saveBlock(path, threadAttached.block);
+        }
+      }
+      return {};
+    }
+
     path = sessionPath(config.dataDir, input.session_id, input.agent_id);
     if (path) {
       if (await cached(path)) return {};
@@ -143,16 +246,7 @@ export async function route(input, config) {
       if (!release || await cached(path)) return {};
     }
     const skills = await eligibleSkills(await client.listSkills(cwd));
-    event.candidateCount = skills.length;
-    event.budget = catalogBudget(effective, await contextWindow(effective, input.model));
-    let ordered;
-    // Pinned skills skip the helper; history records them at relevance 1.
-    try { ordered = [...skills.filter(s => s.pinned).map(s => ({ ...s, probability: 1 })), ...await rank(initialTask(input.prompt), skills.filter(s => !s.pinned), client, config, effective)]; }
-    catch (error) { event.errorCode = errorCode(error); ordered = pinnedFirst(skills); }
-    const rendered = render(ordered, event.budget, event.errorCode && 'helper unavailable: ' + event.errorCode);
-    event.selected = rendered.selected.map(selectedRecord);
-    event.omittedCount = rendered.omittedCount;
-    event.status = event.errorCode ? 'unranked' : !skills.length ? 'no_candidates' : event.selected.length ? 'selected' : 'none';
+    const rendered = await rankedCatalog(input.prompt, skills, client, config, effective, input.model, event);
     output = context('UserPromptSubmit', rendered.block);
     if (event.errorCode) output.systemMessage = `Skill Router helper unavailable (${event.errorCode}); using catalog order.`;
     pendingBlock = rendered.block;
@@ -182,7 +276,7 @@ export async function search({ task_description: task, cwd }, config) {
     effective = await guard(client, cwd);
     const skills = (await eligibleSkills(await client.listSkills(cwd))).filter(s => s.implicit);
     event.candidateCount = skills.length;
-    const selected = (await rank(task, skills, client, config, effective)).filter(s => s.probability >= config.searchMinRelevance).slice(0, config.searchMaxResults);
+    const selected = (await rank(task, skills, client, config, effective, config.searchMinRelevance)).slice(0, config.searchMaxResults);
     event.selected = selected.map(selectedRecord); event.omittedCount = skills.length - selected.length;
     event.status = !skills.length ? 'no_candidates' : selected.length ? 'selected' : 'none';
     return selected.map(s => s.probability.toFixed(2) + ' ' + catalogLine(s)).join('\n') || 'No skill met the relevance threshold.';
@@ -212,7 +306,7 @@ async function main() {
   }
   let config;
   try { config = await loadConfig(); } catch (error) {
-    if (['SessionStart', 'SubagentStart'].includes(input?.hook_event_name)) return { systemMessage: errorCode(error) };
+    if (['SessionStart', 'SubagentStart', 'PreToolUse'].includes(input?.hook_event_name)) return { systemMessage: errorCode(error) };
     throw error;
   }
   if (['--install-app-startup', '--app-startup-check'].includes(process.argv[2])) {

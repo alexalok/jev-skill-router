@@ -82,8 +82,11 @@ export function render(skills, budget, failure) {
   if (omittedCount) lines.push(`- ${omittedCount} additional skills omitted from this bounded skills list.`);
   const order = (failure ? `not ranked (${failure})` : 'ordered from most to least relevant to the initial request') +
     (selected.some(skill => skill.pinned) ? ', after the always-listed skills at the top' : '');
-  const block = ['## Skills', `A skill is a set of local instructions stored in a SKILL.md file. These are the skills available for this task, ${order}. This list is sent once; it stays valid for the whole session.`,
-    '### Available skills', ...lines, '### How to use skills',
+  const noMatch = !failure && skills.every(skill => skill.pinned);
+  const intro = noMatch ? (skills.length ? 'Always-listed skills appear below. No other skills were found relevant to the initial request.' : 'No skills were found relevant to the initial request.') +
+    ' If you need a skill, call the search_skills tool with your task description and working directory.' :
+    `A skill is a set of local instructions stored in a SKILL.md file. These are the skills available for this task, ${order}. This list is sent once; it stays valid for the whole session.`;
+  const block = ['## Skills', intro, ...(noMatch && !skills.length ? [] : ['### Available skills', ...lines]), '### How to use skills',
     "- If the task matches a skill's description, read its SKILL.md fully before acting and follow it.",
     '- A skill the user names explicitly must be used even if it is absent from this list.',
     '- If the task changes and nothing above fits, call the search_skills tool with a description of the new task.',

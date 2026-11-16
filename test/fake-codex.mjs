@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { appendFileSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
-const dir = process.cwd(), data = JSON.parse(readFileSync(join(dir, 'fake.json')));
+const cwd = process.cwd(), dir = process.env.JEV_FAKE_ROOT || cwd, data = JSON.parse(readFileSync(join(dir, 'fake.json')));
 const send = message => console.log(JSON.stringify(message));
 let initialized = false, threads = 0, lists = 0;
 assert.deepEqual(process.argv.slice(2), ['app-server','--stdio']);
@@ -21,13 +21,14 @@ for await (const line of createInterface({ input: process.stdin })) {
   assert(initialized);
   if (method === 'config/read') {
     if (data.mode === 'badConfig') send({ id, error: {} });
-    else ok({ config: { skills: data.skills, mcp_servers: p.cwd === dir ? { project: {} } : { user: {} } } });
+    else ok({ config: { skills: data.skills, mcp_servers: p.cwd === cwd ? { project: {} } : { user: {} } } });
   } else if (method === 'skills/list') {
     // Like real Codex, plugin skills (the second half here) appear only after a few reads.
-    assert.deepEqual(p.cwds, [dir]); assert.equal(p.forceReload, true);
+    assert.deepEqual(p.cwds, [cwd]); assert.equal(p.forceReload, true);
     const skills = data.mode === 'late' && ++lists < 3 ? data.catalog.slice(0, 6) : data.catalog;
-    ok({ data: data.mode === 'catalog' ? [] : [{ cwd: dir, skills }] });
+    ok({ data: data.mode === 'catalog' ? [] : [{ cwd, skills }] });
   } else if (method === 'thread/start') {
+    appendFileSync(join(dir,'instructions'), p.baseInstructions + '\n');
     assert.equal(p.ephemeral, true); assert.equal(p.modelProvider, undefined);
     assert.equal(p.model, 'custom'); assert.equal(p.sandbox, 'read-only'); assert.deepEqual(readdirSync(p.cwd), []);
     assert.equal(p.approvalPolicy, 'never'); assert.equal(p.approvalsReviewer, 'user');
@@ -41,9 +42,11 @@ for await (const line of createInterface({ input: process.stdin })) {
   } else if (method === 'turn/start') {
     assert.equal(p.effort, 'high'); assert(p.outputSchema.properties.scores);
     const text = p.input[0].text;
+    if (data.expectedTask) assert.equal(JSON.parse(text.split('\n')[0].slice('Task (data): '.length)), data.expectedTask);
     assert(!text.includes(dir)); assert(!text.includes('PRIVATE_BODY'));
     if (data.mode === 'long') assert.equal(JSON.parse(text.split('\n')[0].slice('Task (data): '.length)), 'x'+'😀'.repeat(5999));
     const scores = [...text.matchAll(/^s(\d+) \|/gmu)].map(m => ({ id:m[0].split(' ')[0], relevance: Math.min(1, Number(m[1])/10) }));
+    if (data.mode === 'zero') for (const row of scores) row.relevance=0;
     if (data.mode === 'hang') continue;
     if (data.mode === 'delay') await new Promise(r=>setTimeout(r,300));
     if (data.mode === 'request') { send({ id, method:'item/commandExecution/requestApproval', params:{} }); continue; }
