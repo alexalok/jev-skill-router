@@ -34,6 +34,8 @@ include_instructions = false
 
 若要让某个技能无论相关性如何都出现在首次注入中，请在其 `agents/openai.yaml` 中设置 `policy.skill_router_always_injected_in_initial_turn: true`。这类技能不经辅助模型评分，排在列表最前，且不会因预算被省略（其开销仍计入预算）。该标志对仅限手动调用的技能（`allow_implicit_invocation: false`）同样生效；`search_skills` 仍会跳过仅限手动调用的技能。
 
+Codex 默认把每个钩子的 `additionalContext` 限制在约 2,500 个 token（每四个 UTF-8 字节约一个 token）。超出时，Codex 把全文存入临时文件，模型只看到开头和结尾，排序列表的中间部分被截掉。因此随插件提供的 `hooks.json` 在每个处理器上把 `additionalContextLimit` 设为 `0`（不限制），上述预算是唯一的限制。自行注册钩子时请设置相同的值。
+
 子代理通过 `SubagentStart` 钩子继承父会话的列表，无需调用模型（Codex 不向子代理发送 `UserPromptSubmit`）。父会话尚无列表时，子代理得到未排序的目录。恢复会话不重新注入，分叉会话重新排序。根会话压缩后从缓存恢复，无需调用模型，可能在下一轮生效；Codex 不向子代理发送此事件。缓存保存 30 天。评分失败时按目录顺序注入、缓存并提示错误码；目录读取失败则在下一次提交时重试。
 
 任务变化时可调用 `search_skills`，传入 `task_description`（1–24,000 个 UTF-8 字节）和 `cwd`（任务目录的绝对路径）。工具检查同一配置，按阈值过滤，再返回指定数量的结果。无匹配与调用错误分别提示。

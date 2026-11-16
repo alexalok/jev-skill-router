@@ -30,6 +30,7 @@ Requirements (numbered as given by the owner):
 - `session_id` in hook input is the root thread's id. Subagent hooks carry the same `session_id` plus `agent_id`.
 - Live test (0.166.0): a spawned subagent fires `SubagentStart` only, never `UserPromptSubmit`; `additionalContext` returned from `SubagentStart` reaches the subagent's context.
 - After compaction Codex queues a `SessionStart` hook with `source: compact` for the root thread (not for subagents); its `additionalContext` is recorded into history.
+- Codex (0.166.0, `codex-rs/hooks/src/output_spill.rs`) limits `additionalContext` per hook handler through `additionalContextLimit`, default 2,500 tokens counted as `ceil(utf8_bytes / 4)`. It applies to `UserPromptSubmit`, `SessionStart` and `SubagentStart`. Longer text is written to `$TMPDIR/hook_outputs/<thread_id>/<uuid>.txt`; the model gets a `Warning: truncated output` header, the first and last halves of the budget joined by `…N tokens truncated…`, and a `Full hook output saved to:` footer. `0` disables the limit and there is no maximum.
 
 ## Architecture
 
@@ -90,6 +91,8 @@ Flow for `UserPromptSubmit`:
    ```
 
 Budget (same rules as Codex): `skills.max_context_tokens` from Codex config, capped at 10,000; else 2% of the session model's context window; else 8,000 characters. Token cost per line is `ceil(utf8_bytes / 4)`. The fixed header/footer text is not counted, as in Codex. There is no router-side override.
+
+`hooks.json` sets `"additionalContextLimit": 0` on every handler. With the default limit, any block above about 10,000 bytes lost the middle of the ranked list while the least relevant tail survived (89 of 135 cached blocks on the development machine). The router budget already bounds the block, and a matching nonzero limit would be fragile because the budget does not count the fixed header and footer text or the subagent prefix.
 
 ### Always-listed skills
 

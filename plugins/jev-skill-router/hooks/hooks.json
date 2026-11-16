@@ -9,6 +9,7 @@
             "type": "command",
             "command": "node \"${PLUGIN_ROOT}/scripts/router.mjs\"",
             "timeout": 5,
+            "additionalContextLimit": 0,
             "statusMessage": "Loading Skill Router"
           }
         ]
@@ -21,6 +22,7 @@
             "type": "command",
             "command": "node \"${PLUGIN_ROOT}/scripts/router.mjs\"",
             "timeout": 130,
+            "additionalContextLimit": 0,
             "statusMessage": "Checking skill routing"
           }
         ]
@@ -33,6 +35,7 @@
             "type": "command",
             "command": "node \"${PLUGIN_ROOT}/scripts/router.mjs\"",
             "timeout": 20,
+            "additionalContextLimit": 0,
             "statusMessage": "Passing skills to subagent"
           }
         ]
