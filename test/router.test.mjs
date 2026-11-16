@@ -463,3 +463,21 @@ test('create-thread bundle registration and child cache isolation', async t => {
   await route({ ...f.input, session_id: 'parent', prompt: output.hookSpecificOutput.updatedInput.prompt }, f.config);
   assert.equal(await readFile(path, 'utf8'), before);
 });
+
+test('trailing whitespace does not duplicate a create-thread catalog or break child adoption', async t => {
+  const f = await threadFixture(t);
+  const args = (await route(f.thread, f.config)).hookSpecificOutput.updatedInput;
+  for (const [index, suffix] of ['\n', '\r\n', ' \t\n\n'].entries()) {
+    const calls = await f.calls();
+    const prompt = args.prompt + suffix;
+    assert.deepEqual(await route({ ...f.thread, tool_input: { ...args, prompt } }, f.config), {});
+    assert.deepEqual(await f.calls(), calls);
+    const child = { ...f.input, session_id: `child-whitespace-${index}`, prompt };
+    assert.deepEqual(await route(child, f.config), {});
+    const compact = await route({ ...child, hook_event_name: 'SessionStart', source: 'compact' }, f.config);
+    assert.match(compact.hookSpecificOutput.additionalContext, /^## Skills\n/);
+    assert.equal((compact.hookSpecificOutput.additionalContext.match(/## Skills/g) || []).length, 1);
+  }
+  assert.equal((await f.calls()).filter(call => call === 'turn/start').length, 1);
+  await assert.rejects(stat(sessionPath(f.dataDir, 'parent')), { code: 'ENOENT' });
+});

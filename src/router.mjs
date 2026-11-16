@@ -117,7 +117,9 @@ async function rankedCatalog(prompt, skills, client, config, effective, model, e
 const threadMarker = '<!-- skill-router:create-thread:v2 ';
 const threadEnd = '<!-- /skill-router:create-thread:v2 -->';
 function attachedThreadCatalog(prompt) {
-  if (typeof prompt !== 'string' || !prompt.endsWith('\n' + threadEnd)) return null;
+  if (typeof prompt !== 'string') return null;
+  prompt = prompt.trimEnd();
+  if (!prompt.endsWith('\n' + threadEnd)) return null;
   const start = prompt.lastIndexOf('\n\n' + threadMarker);
   if (start < 0) return null;
   const end = prompt.indexOf(' -->\n', start);
