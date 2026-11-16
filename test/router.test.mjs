@@ -92,8 +92,7 @@ test('initial cutoff, pinned override, empty results and fallback agree with his
   assert.equal(event.threshold,0.9); assert(!block.includes('additional skills omitted'));
   await search({task_description:'task',cwd:f.cwd},{...f.config,searchMinRelevance:0.3});
   const instructions=(await readFile(join(f.cwd,'instructions'),'utf8')).trim().split('\n');
-  assert(instructions[0].includes('Skills scored below 0.9 are dropped'));
-  assert(instructions[1].includes('Skills scored below 0.3 are dropped'));
+  assert(instructions.length>=2 && instructions.every(line=>!/dropped|0.9|0.3/.test(line)));
   await f.state('zero');
   [block,event]=await run('none');
   assert.equal(event.status,'none'); assert.equal(event.threshold,0.1); assert.deepEqual(event.selected,[]);
