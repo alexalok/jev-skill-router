@@ -288,23 +288,6 @@ test('missing lock cannot be acquired until takeover claim expires',async t=>{
   assert.equal(typeof release,'function');await release();
 });
 
-test('subagents inherit the parent list; without one they get the unranked catalog',async t=>{
-  const f=await fixture(t), sub={hook_event_name:'SubagentStart',session_id:'s',agent_id:'kid',agent_type:'default',cwd:f.cwd};
-  const fallback=(await route(sub,f.config)).hookSpecificOutput;
-  assert.equal(fallback.hookEventName,'SubagentStart'); assert.match(fallback.additionalContext,/not ranked \(no ranked list from the parent session\)/);
-  assert(!(await f.calls()).includes('turn/start'));
-  await f.state('ok',{}); assert.deepEqual(await route({...sub,agent_id:'native'},f.config),{});
-  await f.state('ok');
-  const parent=(await route(f.input,f.config)).hookSpecificOutput.additionalContext;
-  const child=(await route({...sub,agent_id:'kid2'},{...f.config,codexBin:'/missing'})).hookSpecificOutput.additionalContext;
-  assert(child.startsWith('Skill list inherited from the parent session')); assert(child.endsWith(parent));
-  assert.match(child.slice(0,-parent.length),/call the search_skills tool/);
-  assert.deepEqual(await route({...f.input,agent_id:'kid2'},f.config),{});
-  assert.equal((await f.calls()).filter(x=>x==='turn/start').length,1);
-  assert.match((await route({...sub,agent_id:'kid3',session_id:'other'},{...f.config,codexBin:'/missing'})).systemMessage,/SKILLS_CODEX_UNAVAILABLE/);
-  const [hook]=f.call(JSON.stringify({...sub,agent_id:'kid4'})); assert(hook.hookSpecificOutput.additionalContext.endsWith(parent));
-});
-
 test('catalog read waits for plugin skills that appear after login loads',async t=>{
   const f=await fixture(t); await f.state('late');
   const block=(await route(f.input,f.config)).hookSpecificOutput.additionalContext;
@@ -470,6 +453,7 @@ test('trailing whitespace does not duplicate a create-thread catalog or break ch
     const calls = await f.calls();
     const prompt = args.prompt + suffix;
     assert.deepEqual(await route({ ...f.thread, tool_input: { ...args, prompt } }, f.config), {});
+    assert.deepEqual(await route({ ...input, tool_input: { ...out.updatedInput, message: out.updatedInput.message + ' \n\n' } }, f.config), {});
     assert.deepEqual(await f.calls(), calls);
     const child = { ...f.input, session_id: `child-whitespace-${index}`, prompt };
     assert.deepEqual(await route(child, f.config), {});
@@ -479,4 +463,133 @@ test('trailing whitespace does not duplicate a create-thread catalog or break ch
   }
   assert.equal((await f.calls()).filter(call => call === 'turn/start').length, 1);
   await assert.rejects(stat(sessionPath(f.dataDir, 'parent')), { code: 'ENOENT' });
+});
+
+const spawnInput = (f, args = {}) => ({ hook_event_name: 'PreToolUse', tool_name: 'collaborationspawn_agent',
+  session_id: 's', cwd: f.cwd, tool_input: { message: 'Fix child task', task_name: 'child', fork_turns: 'none', ...args } });
+
+
+test('spawn ranks child task for fresh/full context, preserves args and isolates parent cache', async t => {
+  const f = await fixture(t);
+  await route(f.input, f.config);
+  const parentPath = sessionPath(f.dataDir, 's'), before = await readFile(parentPath, 'utf8');
+  for (const fork_turns of ['none', 'all']) {
+    const input = spawnInput(f, { fork_turns, model: 'child-model', futureOption: { preserve: true } });
+    await writeFile(join(f.cwd, 'fake.json'), JSON.stringify({ skills: { include_instructions: false }, catalog: f.catalog, expectedTask: input.tool_input.message }));
+    const original = structuredClone(input);
+    const out = (await route(input, { ...f.config, initialMinRelevance: 0.9 })).hookSpecificOutput;
+    assert.equal(out.hookEventName, 'PreToolUse'); assert.equal(out.permissionDecision, 'allow');
+    assert.deepEqual(input, original);
+    assert.deepEqual({ ...out.updatedInput, message: original.tool_input.message }, original.tool_input);
+    assert(out.updatedInput.message.startsWith(original.tool_input.message + '\n\n'));
+    assert.match(out.updatedInput.message, /instead of any Skill Router catalog inherited from parent history/);
+    assert.match(out.updatedInput.message, /most to least relevant/);
+    assert.doesNotMatch(out.updatedInput.message, /- skill8:/);
+    assert.equal((out.updatedInput.message.match(/## Skills\n/g) || []).length, 1);
+    const calls = await f.calls();
+    assert.deepEqual(await route({ ...input, tool_input: out.updatedInput }, f.config), {});
+    assert.deepEqual(await route({ ...input, tool_input: { ...out.updatedInput, message: out.updatedInput.message + ' \n\n' } }, f.config), {});
+    assert.deepEqual(await f.calls(), calls);
+  }
+  assert.equal(await readFile(parentPath, 'utf8'), before);
+  const events = (await history(f)).filter(e => e.source === 'subagent');
+  assert.equal(events.length, 2);
+  for (const event of events) {
+    assert.equal(event.threshold, 0.9); assert.equal(event.omittedCount, 9);
+    assert.deepEqual(event.selected.map(s => s.name), ['skill10', 'skill11', 'skill9']);
+    assert(!JSON.stringify(event).includes('Fix child task'));
+  }
+});
+
+test('spawn cwd override discovers child skills; changed task replaces existing attachment', async t => {
+  const parent = await fixture(t), child = await fixture(t);
+  child.catalog.forEach(s => { s.name = 'child-' + s.name; });
+  await child.state('ok', { include_instructions: false, max_context_tokens: 0 });
+  await mkdir(join(child.cwd, 'skill0', 'agents'));
+  await writeFile(join(child.cwd, 'skill0', 'agents', 'openai.yaml'), 'policy: {skill_router_always_injected_in_initial_turn: true}');
+  const input = spawnInput(parent, { cwd: child.cwd }); input.tool_name = 'spawn_agent'; input.agent_id = 'nested-parent';
+  const first = (await route(input, parent.config)).hookSpecificOutput.updatedInput;
+  assert.match(first.message, /- child-skill0:/); assert.doesNotMatch(first.message, /^- skill\d+:/mu);
+  assert.equal((first.message.match(/^- child-skill/gmu) || []).length, 1);
+  await assert.rejects(stat(join(parent.cwd, 'calls')), { code: 'ENOENT' });
+  const event = (await history(parent))[0]; assert.equal(event.cwd, child.cwd); assert.deepEqual(event.budget, { tokens: 0 });
+  const changed = first.message.replace('Fix child task', 'Different child task');
+  await writeFile(join(child.cwd, 'fake.json'), JSON.stringify({ skills: { include_instructions: false }, catalog: child.catalog, expectedTask: 'Different child task' }));
+  const second = (await route({ ...input, tool_input: { ...first, message: changed } }, parent.config)).hookSpecificOutput.updatedInput;
+  assert.equal((second.message.match(/## Skills\n/g) || []).length, 1);
+  assert.equal((await child.calls()).filter(x => x === 'turn/start').length, 2);
+  await assert.rejects(stat(sessionPath(parent.dataDir, 's', 'nested-parent')), { code: 'ENOENT' });
+  // Relative overrides are resolved against the hook cwd, never process.cwd().
+  await child.state('ok');
+  const relative = spawnInput(parent, { cwd: '../' + child.cwd.split('/').at(-1) });
+  assert((await route(relative, parent.config)).hookSpecificOutput.updatedInput.message.includes('child-skill'));
+});
+
+test('spawn skips unsupported tools and invalid payloads; SubagentStart no longer injects', async t => {
+  const f = await fixture(t), input = spawnInput(f);
+  for (const tool_name of ['Agent', 'other_spawn_agent', 'mcp__codex_app__create_thread', 'send_message_to_thread'])
+    assert.deepEqual(await route({ ...input, tool_name }, f.config), {});
+  for (const tool_input of [null, [], {}, { message: '' }, { message: '  ' }, { message: 1 }, { prompt: 'task' }])
+    assert.deepEqual(await route({ ...input, tool_input }, f.config), {});
+  assert.deepEqual(await route({ ...input, hook_event_name: 'SubagentStart' }, f.config), {});
+  for (const cwd of ['', null, 4, 'bad\0path']) {
+    const out = await route(spawnInput(f, { cwd }), f.config);
+    assert.equal(out.hookSpecificOutput, undefined); assert.match(out.systemMessage, /SKILLS_INPUT_INVALID/);
+  }
+  await assert.rejects(stat(join(f.cwd, 'calls')), { code: 'ENOENT' });
+  await assert.rejects(stat(f.dataDir), { code: 'ENOENT' });
+});
+
+test('spawn guard/discovery errors pass through; helper fallback and history failures preserve update', async t => {
+  const f = await fixture(t), input = spawnInput(f);
+  for (const [mode, skills, code] of [['badConfig', {}, 'SKILLS_CODEX_FAILED'],
+    ['ok', { include_instructions: true }, 'SKILLS_NATIVE_INSTRUCTIONS'],
+    ['catalog', { include_instructions: false }, 'SKILLS_CATALOG_INVALID']]) {
+    await f.state(mode, skills);
+    const result = await route(input, f.config);
+    assert.equal(result.decision, undefined); assert.equal(result.hookSpecificOutput, undefined);
+    assert.match(result.systemMessage, new RegExp(code));
+  }
+  await f.state('request');
+  const fallback = await route(input, f.config);
+  assert.match(fallback.hookSpecificOutput.updatedInput.message, /not ranked/);
+  assert.deepEqual((await history(f)).map(e => e.status), ['error', 'error', 'error', 'unranked']);
+  await f.state('ok');
+  const badHistory = await route(input, { ...f.config, dataDir: f.configFile });
+  assert(badHistory.hookSpecificOutput.updatedInput.message);
+  assert.match(badHistory.systemMessage, /SKILLS_RECORD_UNAVAILABLE/);
+  await assert.rejects(stat(sessionPath(f.dataDir, 's')), { code: 'ENOENT' });
+});
+
+test('child opening prompt adopts catalog without duplicate ranking or parent cache poisoning', async t => {
+  const f = await fixture(t);
+  await route(f.input, f.config);
+  const path = sessionPath(f.dataDir, 's'), before = await readFile(path, 'utf8');
+  const prompt = (await route(spawnInput(f), f.config)).hookSpecificOutput.updatedInput.message;
+  for (const identity of [{ session_id: 's', agent_id: 'child' }, { session_id: 'fresh-child' }]) {
+    const child = { ...f.input, ...identity, prompt };
+    assert.deepEqual(await route(child, f.config), {});
+    assert.deepEqual(await route(child, f.config), {});
+    assert.deepEqual(await route({ ...child, prompt: 'Follow up' }, f.config), {});
+    const compact = await route({ ...child, hook_event_name: 'SessionStart', source: 'compact' }, { ...f.config, codexBin: '/missing' });
+    assert.match(compact.hookSpecificOutput.additionalContext, /selected for your own task/);
+  }
+  assert.deepEqual(await route({ ...f.input, prompt }, f.config), {});
+  assert.equal(await readFile(path, 'utf8'), before);
+  assert.equal((await f.calls()).filter(x => x === 'turn/start').length, 2);
+});
+
+test('bundled spawn hook registration, rewrite, disabled mode and config failures', async t => {
+  const f = await fixture(t), input = spawnInput(f);
+  const hooks = JSON.parse(await readFile('plugins/jev-skill-router/hooks/hooks.json', 'utf8')).hooks;
+  assert.equal(hooks.SubagentStart, undefined);
+  const matcher = new RegExp(hooks.PreToolUse.find(h => h.matcher.includes("spawn_agent")).matcher);
+  for (const name of ['collaborationspawn_agent', 'spawn_agent', 'Agent']) assert(matcher.test(name));
+  assert(!matcher.test('other_spawn_agent')); assert.equal(hooks.PreToolUse[0].hooks[0].timeout, 130);
+  assert.match(f.call(JSON.stringify(input))[0].hookSpecificOutput.updatedInput.message, /## Skills/);
+  assert.deepEqual(f.call(JSON.stringify(input), [], { JEV_SKILL_ROUTER_DISABLED: '1' }), [{}]);
+  await writeFile(f.configFile, '{broken');
+  const bad = f.call(JSON.stringify(input))[0];
+  assert.equal(bad.decision, undefined); assert.equal(bad.hookSpecificOutput, undefined);
+  assert.match(bad.systemMessage, /SKILLS_CONFIG_INVALID/);
 });
