@@ -480,3 +480,37 @@ test('trailing whitespace does not duplicate a create-thread catalog or break ch
   assert.equal((await f.calls()).filter(call => call === 'turn/start').length, 1);
   await assert.rejects(stat(sessionPath(f.dataDir, 'parent')), { code: 'ENOENT' });
 });
+
+test('failed rerouting strips invalidated catalogs before child cache adoption', async t => {
+  const f = await threadFixture(t);
+  const enriched = (await route(f.thread, f.config)).hookSpecificOutput.updatedInput;
+  const task = 'Fix an unrelated database task';
+  const args = { ...enriched, prompt: enriched.prompt.replace(f.thread.tool_input.prompt, task) };
+  const input = { ...f.thread, tool_input: args };
+  for (const [mode, skills] of [['badConfig', {}], ['ok', { include_instructions: true }],
+    ['catalog', { include_instructions: false }]]) {
+    await f.threadState(mode, skills);
+    const result = await route(input, f.config);
+    assert.deepEqual(result.hookSpecificOutput.updatedInput, { ...args, prompt: task });
+    assert.match(result.systemMessage, /stale catalog removed/);
+  }
+  const pipe = process.env.CODEX_APP_TOOLS_PIPE_PATH;
+  process.env.CODEX_APP_TOOLS_PIPE_PATH = '';
+  try {
+    const target = { type: 'project', projectId: 'other', environment: { type: 'local' } };
+    const result = await route({ ...f.thread, tool_input: { ...enriched, target } }, f.config);
+    assert.deepEqual(result.hookSpecificOutput.updatedInput, { ...enriched, target, prompt: f.thread.tool_input.prompt });
+    assert.match(result.systemMessage, /SKILLS_PROJECT_LOOKUP_UNAVAILABLE/);
+  } finally { if (pipe === undefined) delete process.env.CODEX_APP_TOOLS_PIPE_PATH; else process.env.CODEX_APP_TOOLS_PIPE_PATH = pipe; }
+  const cloud = { ...enriched, target: { type: 'codexCloud', environmentConfigId: 'cloud' } };
+  assert.deepEqual((await route({ ...f.thread, tool_input: cloud }, f.config)).hookSpecificOutput.updatedInput,
+    { ...cloud, prompt: f.thread.tool_input.prompt });
+  await writeFile(f.configFile, '{broken');
+  assert.deepEqual(f.call(JSON.stringify(input))[0].hookSpecificOutput.updatedInput, { ...args, prompt: task });
+  assert.equal(f.call(JSON.stringify({ ...f.thread, tool_input: enriched }))[0].hookSpecificOutput, undefined);
+  await writeFile(join(f.cwd, 'fake.json'), JSON.stringify({ skills: { include_instructions: false }, catalog: f.catalog, expectedTask: task }));
+  const child = await route({ ...f.input, session_id: 'rerouted-child', prompt: task }, f.config);
+  assert.match(child.hookSpecificOutput.additionalContext, /^## Skills\n/);
+  assert(!child.systemMessage);
+  await assert.rejects(stat(sessionPath(f.dataDir, 'parent')), { code: 'ENOENT' });
+});

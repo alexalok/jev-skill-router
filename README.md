@@ -74,7 +74,9 @@ A parent-side `PreToolUse` hook ranks the opening `prompt` and appends the selec
 catalog before Codex creates the chat, including when its first turn skips
 `UserPromptSubmit`. Other tool arguments are preserved. Repeated routing of the
 same enriched prompt does not append another catalog; changed tasks or targets
-are ranked again. Parent session caches are never used or replaced.
+are ranked again. If rerouting fails or the new target is unsupported, the obsolete
+attachment is removed while preserving the task and other arguments. Parent
+session caches are never used or replaced.
 
 - Projectless chats: discover user/system/admin skills from a neutral temporary
   directory, excluding repository scopes.
@@ -85,8 +87,8 @@ are ranked again. Parent session caches are never used or replaced.
   worktree and, in rare cases, may have drifted from this worktree."
   These are source skills, not verified destination contents or paths.
 - Remote/cloud targets are not represented by local catalogs. Missing app pipe,
-  unknown project, inaccessible path, or lookup failure leaves the prompt unchanged
-  with a diagnostic. Helper ranking failures retain the existing unranked fallback.
+  unknown project, inaccessible path, or lookup failure emits a diagnostic and
+  preserves the task, stripping any invalidated catalog from a previous request. Helper ranking failures retain the existing unranked fallback.
 
 Project lookup uses `CODEX_APP_TOOLS_PIPE_PATH`, supplied by the desktop runtime,
 with the bundled Codex App Tools framed JSON-RPC protocol. This internal transport
@@ -99,4 +101,5 @@ On macOS, the desktop app verifies pipe-client process identity. The create-thre
 hook uses `exec "${CODEX_MCP_NODE_PATH:-node}"` so the app-provided signed Node
 runtime connects directly under the hook host. An arbitrary system Node process
 may be rejected. The fallback remains usable for projectless routing; project
-lookup fails unchanged if the pipe or required runtime identity is unavailable.
+lookup cannot proceed if the pipe or required runtime identity is unavailable;
+the task is preserved and any invalidated catalog is removed.

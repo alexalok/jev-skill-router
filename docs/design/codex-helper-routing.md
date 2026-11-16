@@ -198,7 +198,8 @@ uniquely, have `projectKind: local`, `hostId: local`, and an existing absolute
 directory. Remote caller hosts fail closed for discovery. Worktrees additionally
 require `isGitRepository: true`. No project-ID-to-path guessing or private-state
 fallback is permitted. This is an internal app-facing interface, not a stable
-public API; failures leave create_thread arguments unchanged.
+public API; failures preserve the task and other arguments; an invalidated catalog from an
+earlier task or target is stripped rather than forwarded to the new chat.
 
 The source checkout approximates a new worktree's skills even for explicit branch
 or working-tree starting states; the requested starting state remains untouched.
@@ -213,4 +214,5 @@ On macOS, the desktop app verifies pipe-client process identity. The create-thre
 hook uses `exec "${CODEX_MCP_NODE_PATH:-node}"` so the app-provided signed Node
 runtime connects directly under the hook host. An arbitrary system Node process
 may be rejected. The fallback remains usable for projectless routing; project
-lookup fails unchanged if the pipe or required runtime identity is unavailable.
+lookup cannot proceed if the pipe or required runtime identity is unavailable;
+the task is preserved and any invalidated catalog is removed.

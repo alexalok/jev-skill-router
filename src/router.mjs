@@ -132,18 +132,28 @@ function attachedThreadCatalog(prompt) {
   } catch { return null; }
 }
 
+const threadKey = (task, args) => createHash('sha256').update(JSON.stringify([task, args.target, args.model ?? null])).digest('hex');
+function stripInvalidatedThreadCatalog(input) {
+  const args = input?.tool_input;
+  if (input?.tool_name !== 'mcp__codex_app__create_thread' || !isObject(args)) return {};
+  const attached = attachedThreadCatalog(args.prompt);
+  if (!attached || attached.metadata.key === threadKey(attached.task, args)) return {};
+  return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow',
+    updatedInput: { ...args, prompt: attached.task } } };
+}
+
 // A create_thread opening turn can skip UserPromptSubmit. Route on the caller,
 // without borrowing its project config or writing its session cache.
 async function createThread(input, config) {
   const args = input.tool_input;
   if (input.tool_name !== 'mcp__codex_app__create_thread' || !isObject(args) ||
       !isObject(args.target) || !['projectless', 'project'].includes(args.target.type) ||
-      typeof args.prompt !== 'string' || !args.prompt.trim()) return {};
+      typeof args.prompt !== 'string' || !args.prompt.trim()) return stripInvalidatedThreadCatalog(input);
   if (args.target.type === 'project' && (typeof args.target.projectId !== 'string' ||
-      !['local', 'worktree'].includes(args.target.environment?.type ?? 'local'))) return {};
+      !['local', 'worktree'].includes(args.target.environment?.type ?? 'local'))) return stripInvalidatedThreadCatalog(input);
   const attached = attachedThreadCatalog(args.prompt);
   const task = attached?.task ?? args.prompt;
-  const key = createHash('sha256').update(JSON.stringify([task, args.target, args.model ?? null])).digest('hex');
+  const key = threadKey(task, args);
   if (attached?.metadata.key === key) return {};
   let temporary, cwd, client, event, output = {};
   const started = performance.now();
@@ -170,7 +180,8 @@ async function createThread(input, config) {
     if (event.errorCode) output.systemMessage = `Skill Router helper unavailable (${event.errorCode}); using catalog order.`;
   } catch (error) {
     if (event) event.errorCode = errorCode(error);
-    output = { systemMessage: `Skill Router unavailable for new thread (${errorCode(error)}); opening prompt unchanged.` };
+    output = { ...stripInvalidatedThreadCatalog(input),
+      systemMessage: `Skill Router unavailable for new thread (${errorCode(error)}); ${attached ? 'stale catalog removed' : 'opening prompt unchanged'}.` };
   } finally {
     client?.close();
     if (event) {
@@ -306,7 +317,11 @@ async function main() {
   }
   let config;
   try { config = await loadConfig(); } catch (error) {
-    if (['SessionStart', 'SubagentStart', 'PreToolUse'].includes(input?.hook_event_name)) return { systemMessage: errorCode(error) };
+    if (input?.hook_event_name === 'PreToolUse') {
+      const output = stripInvalidatedThreadCatalog(input);
+      return { ...output, systemMessage: errorCode(error) + (output.hookSpecificOutput ? '; stale catalog removed.' : '') };
+    }
+    if (['SessionStart', 'SubagentStart'].includes(input?.hook_event_name)) return { systemMessage: errorCode(error) };
     throw error;
   }
   if (['--install-app-startup', '--app-startup-check'].includes(process.argv[2])) {
