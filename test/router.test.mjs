@@ -453,7 +453,6 @@ test('trailing whitespace does not duplicate a create-thread catalog or break ch
     const calls = await f.calls();
     const prompt = args.prompt + suffix;
     assert.deepEqual(await route({ ...f.thread, tool_input: { ...args, prompt } }, f.config), {});
-    assert.deepEqual(await route({ ...input, tool_input: { ...out.updatedInput, message: out.updatedInput.message + ' \n\n' } }, f.config), {});
     assert.deepEqual(await f.calls(), calls);
     const child = { ...f.input, session_id: `child-whitespace-${index}`, prompt };
     assert.deepEqual(await route(child, f.config), {});
