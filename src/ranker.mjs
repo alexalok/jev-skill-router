@@ -35,14 +35,17 @@ function scores(output, ids) {
   return values;
 }
 
-export async function rank(task, skills, client, settings, effective) {
+export async function rank(task, skills, client, settings, effective, threshold) {
   const batches = makeBatches(task, skills), ranked = [];
   let next = 0;
   const workers = Array.from({ length: Math.min(3, batches.length) }, async () => {
     while (next < batches.length) {
       const { text, ids } = batches[next++];
       const values = scores(await client.structuredTurn(text, schema, settings, effective), ids);
-      for (const id of ids) ranked.push({ ...skills[Number(id.slice(1))], probability: values.get(id) ?? 0 });
+      for (const id of ids) {
+        const probability = values.get(id) ?? 0;
+        if (probability >= threshold) ranked.push({ ...skills[Number(id.slice(1))], probability });
+      }
     }
   });
   try { await Promise.all(workers); }

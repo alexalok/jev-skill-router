@@ -30,9 +30,11 @@ The helper scores **names and short descriptions** against the task. The plugin 
 
 Image-only or whitespace-only prompts pass the guard without using the session’s initial ranking. For long text prompts, the helper scores the first 24,000 UTF-8 bytes (ending at a whole character); Codex receives the full prompt. Hook input supports up to 8 MiB of JSON.
 
-The main thread receives whole lines in descending relevance order: `- name: description (file: /path/SKILL.md)`. Injection has no relevance floor or count limit. Its budget follows Codex: `skills.max_context_tokens` (at most 10,000), otherwise 2% of the session model context window (read from the Codex model catalog), otherwise 8,000 characters. Each line costs approximately one token per four UTF-8 bytes. A note counts omitted skills. Explicit user requests still take precedence.
+The main thread receives whole lines in descending relevance order: `- name: description (file: /path/SKILL.md)`. Non-pinned skills must score at least `initialMinRelevance` (default 0.8); there is no count limit. If none qualify, the hook lists any pinned skills and suggests calling `search_skills`. Its budget follows Codex: `skills.max_context_tokens` (at most 10,000), otherwise 2% of the session model context window (read from the Codex model catalog), otherwise 8,000 characters. Each line costs approximately one token per four UTF-8 bytes. A note counts skills omitted for budget only. History counts all omitted skills, including those below threshold. Explicit user requests still take precedence.
 
 To list a skill in every initial injection regardless of relevance, set `policy.skill_router_always_injected_in_initial_turn: true` in its `agents/openai.yaml`. Such skills skip the helper, sit at the top of the list and are never dropped for budget (their cost still counts against it). The flag also lists a manual-only skill (`allow_implicit_invocation: false`); `search_skills` keeps skipping manual-only skills.
+
+Codex caps each hook's `additionalContext` at about 2,500 tokens by default (one token per four UTF-8 bytes). Above that it saves the full text to a temp file and shows the model only the head and tail, which cuts the middle of the ranked list. The bundled `hooks.json` therefore sets `additionalContextLimit` to `0` (no cap) on every handler, so the budget above is the only limit. If you register the hooks yourself, set the same value.
 
 Spawned subagents inherit the parent session's list through the `SubagentStart` hook, with no model call (Codex sends them no `UserPromptSubmit`). If the parent has no list yet, they get the budgeted catalog unranked. Resume reuses the cache; forks rank anew. Root compaction restores the cached list without a model call, possibly on the next turn. Codex does not emit that event for subagents. Cached lists expire after 30 days. If ranking fails, the hook caches the budgeted catalog in its original order and reports a safe error code. If discovery fails, it reports the error and retries next prompt.
 
@@ -47,6 +49,7 @@ Optional file: `~/.config/jev-skill-router/config.json`. See [config.example.jso
 | model | gpt-6-luna | Model slug supported by your provider |
 | reasoningEffort | medium | Effort supported by that model |
 | searchMaxResults | 10 | Search results, 1–50 |
+| initialMinRelevance | 0.8 | Inclusive initial-turn threshold for non-pinned skills, 0–1 |
 | searchMinRelevance | 0.8 | Inclusive search threshold, 0–1 |
 | timeoutMs | 45000 | Shared app-server deadline, 1,000–120,000 ms |
 | codexBin | codex | Executable or absolute path |
@@ -64,3 +67,39 @@ Run `node "<plugin-root>/scripts/router.mjs" --list` to inspect eligible skills.
 Use `--dashboard [--port PORT]` for manual startup, or `--install-app-startup` / `--remove-app-startup` for the macOS LaunchAgent. Reinstall the helper after upgrading its standalone script. Automatic servers exit after 30 minutes idle. Other platforms can use hook startup.
 
 From a checkout: `npm ci`, `npm run build`, `npm test`. Tests use a fake Codex process. `npm run dashboard:demo` starts a separate dashboard with synthetic history.
+
+### Opening chats with `create_thread`
+
+A parent-side `PreToolUse` hook ranks the opening `prompt` and appends the selected
+catalog before Codex creates the chat, including when its first turn skips
+`UserPromptSubmit`. Other tool arguments are preserved. Repeated routing of the
+same enriched prompt does not append another catalog; changed tasks or targets
+are ranked again. If rerouting fails or the new target is unsupported, the obsolete
+attachment is removed while preserving the task and other arguments. Parent
+session caches are never used or replaced.
+
+- Projectless chats: discover user/system/admin skills from a neutral temporary
+  directory, excluding repository scopes.
+- Local projects: resolve `projectId` using the desktop app's read-only
+  `list_projects` tool and discover skills in the returned source checkout.
+- New worktrees: use the selected project's source checkout before the destination
+  exists. The injected catalog explicitly says: "Skills were taken from the main
+  worktree and, in rare cases, may have drifted from this worktree."
+  These are source skills, not verified destination contents or paths.
+- Remote/cloud targets are not represented by local catalogs. Missing app pipe,
+  unknown project, inaccessible path, or lookup failure emits a diagnostic and
+  preserves the task, stripping any invalidated catalog from a previous request. Helper ranking failures retain the existing unranked fallback.
+
+Project lookup uses `CODEX_APP_TOOLS_PIPE_PATH`, supplied by the desktop runtime,
+with the bundled Codex App Tools framed JSON-RPC protocol. This internal transport
+can change between app versions; no private app database or state files are read.
+Child compaction can restore the catalog if `UserPromptSubmit` receives the enriched
+opening prompt; when that event never fires, the parent cannot seed the unknown
+child's cache. Use `search_skills` for current destination contents as needed.
+
+On macOS, the desktop app verifies pipe-client process identity. The create-thread
+hook uses `exec "${CODEX_MCP_NODE_PATH:-node}"` so the app-provided signed Node
+runtime connects directly under the hook host. An arbitrary system Node process
+may be rejected. The fallback remains usable for projectless routing; project
+lookup cannot proceed if the pipe or required runtime identity is unavailable;
+the task is preserved and any invalidated catalog is removed.

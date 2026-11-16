@@ -30,6 +30,7 @@ Requirements (numbered as given by the owner):
 - `session_id` in hook input is the root thread's id. Subagent hooks carry the same `session_id` plus `agent_id`.
 - Live test (0.166.0): a spawned subagent fires `SubagentStart` only, never `UserPromptSubmit`; `additionalContext` returned from `SubagentStart` reaches the subagent's context.
 - After compaction Codex queues a `SessionStart` hook with `source: compact` for the root thread (not for subagents); its `additionalContext` is recorded into history.
+- Codex (0.166.0, `codex-rs/hooks/src/output_spill.rs`) limits `additionalContext` per hook handler through `additionalContextLimit`, default 2,500 tokens counted as `ceil(utf8_bytes / 4)`. It applies to `UserPromptSubmit`, `SessionStart` and `SubagentStart`. Longer text is written to `$TMPDIR/hook_outputs/<thread_id>/<uuid>.txt`; the model gets a `Warning: truncated output` header, the first and last halves of the budget joined by `…N tokens truncated…`, and a `Full hook output saved to:` footer. `0` disables the limit and there is no maximum.
 
 ## Architecture
 
@@ -90,6 +91,8 @@ Flow for `UserPromptSubmit`:
    ```
 
 Budget (same rules as Codex): `skills.max_context_tokens` from Codex config, capped at 10,000; else 2% of the session model's context window; else 8,000 characters. Token cost per line is `ceil(utf8_bytes / 4)`. The fixed header/footer text is not counted, as in Codex. There is no router-side override.
+
+`hooks.json` sets `"additionalContextLimit": 0` on every handler. With the default limit, any block above about 10,000 bytes lost the middle of the ranked list while the least relevant tail survived (89 of 135 cached blocks on the development machine). The router budget already bounds the block, and a matching nonzero limit would be fragile because the budget does not count the fixed header and footer text or the subagent prefix.
 
 ### Always-listed skills
 
@@ -179,3 +182,37 @@ Tests use a fake `codexBin` (a Node script speaking the app-server protocol) so 
 - Not adopted: detecting the initial task by scanning `transcript_path`. The session cache file is needed for compaction anyway, and writing it only after a successful render already fixes the "killed hook leaves the session without a list" problem without depending on the transcript format. Consequence: a forked session gets a fresh ranking even though its history already holds the parent's block.
 - Not adopted: a `tool_timeout_sec` entry. Codex's default MCP tool timeout is 300 s (`rmcp_client.rs` `DEFAULT_TOOL_TIMEOUT`), above the router's maximum `timeoutMs` of 120 s.
 - Kept against the reviewer's "cut": treating an old `jev-*` model value as unset. Every existing config file contains `jev-latest`; passing it to Codex would make every ranking fail.
+
+## Parent-side chat creation
+
+`mcp__codex_app__create_thread` has its own exact PreToolUse matcher alongside existing startup hooks. Both initial routing and chat creation reuse `rankedCatalog`, native-instructions guard,
+helper isolation, fallback, and private selection recording. `create_thread`
+records use source `create_thread`; no prompt is written to history. Lookup
+failures before a valid cwd exists emit diagnostics without inventing a cwd record.
+
+The app adapter performs only `tools/list` and `tools/call(list_projects)`. The
+wire format follows the bundled codex-app-tools server: four-byte little-endian
+length, then JSON-RPC 2.0. Requests carry caller session identity and fresh call
+IDs, and have bounded time and response size. Project entries must match ID
+uniquely, have `projectKind: local`, `hostId: local`, and an existing absolute
+directory. Remote caller hosts fail closed for discovery. Worktrees additionally
+require `isGitRepository: true`. No project-ID-to-path guessing or private-state
+fallback is permitted. This is an internal app-facing interface, not a stable
+public API; failures preserve the task and other arguments; an invalidated catalog from an
+earlier task or target is stripped rather than forwarded to the new chat.
+
+The source checkout approximates a new worktree's skills even for explicit branch
+or working-tree starting states; the requested starting state remains untouched.
+The exact drift caveat travels with the catalog, including child cache adoption.
+Projectless discovery removes repo/unknown scopes. Neither route reads the
+parent's ranked catalog or writes its cache. A v2 attachment key covers original
+task, target and requested model. Changed task/target/model replaces the old
+attachment. Child startup adopts an attachment only with a known, distinct session
+identity; opening events that never fire cannot populate compaction caches.
+
+On macOS, the desktop app verifies pipe-client process identity. The create-thread
+hook uses `exec "${CODEX_MCP_NODE_PATH:-node}"` so the app-provided signed Node
+runtime connects directly under the hook host. An arbitrary system Node process
+may be rejected. The fallback remains usable for projectless routing; project
+lookup cannot proceed if the pipe or required runtime identity is unavailable;
+the task is preserved and any invalidated catalog is removed.

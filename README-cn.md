@@ -30,9 +30,11 @@ include_instructions = false
 
 仅含图片或空白的消息通过检查后不会消耗首次排序机会。长消息只取前 24,000 个 UTF-8 字节中的完整字符供辅助模型评分；Codex 仍收到完整消息。钩子支持最多 8 MiB 的 JSON 输入。
 
-主线程按相关性从高到低收到完整条目：`- 名称: 描述 (file: /路径/SKILL.md)`。首次注入没有最低分或数量限制。预算优先取 `skills.max_context_tokens`，否则取当前会话模型上下文窗口的 2%（读取自 Codex 模型目录），仅显式设置的预算上限为 10,000 个 token；上下文大小未知时用 8,000 个字符。每行按每四个 UTF-8 字节约一个 token 估算。末尾提示省略数量。用户点名的技能仍须使用。
+主线程按相关性从高到低收到完整条目：`- 名称: 描述 (file: /路径/SKILL.md)`。非固定技能的评分须达到 `initialMinRelevance`（默认 0.8），数量不限。若无技能达标，仍列出固定技能，并提示可调用 `search_skills`。预算优先取 `skills.max_context_tokens`，否则取当前会话模型上下文窗口的 2%（读取自 Codex 模型目录），仅显式设置的预算上限为 10,000 个 token；上下文大小未知时用 8,000 个字符。每行按每四个 UTF-8 字节约一个 token 估算。末尾仅提示因预算而省略的技能数量；历史记录的省略数量还包括未达到阈值的技能。用户点名的技能仍须使用。
 
 若要让某个技能无论相关性如何都出现在首次注入中，请在其 `agents/openai.yaml` 中设置 `policy.skill_router_always_injected_in_initial_turn: true`。这类技能不经辅助模型评分，排在列表最前，且不会因预算被省略（其开销仍计入预算）。该标志对仅限手动调用的技能（`allow_implicit_invocation: false`）同样生效；`search_skills` 仍会跳过仅限手动调用的技能。
+
+Codex 默认把每个钩子的 `additionalContext` 限制在约 2,500 个 token（每四个 UTF-8 字节约一个 token）。超出时，Codex 把全文存入临时文件，模型只看到开头和结尾，排序列表的中间部分被截掉。因此随插件提供的 `hooks.json` 在每个处理器上把 `additionalContextLimit` 设为 `0`（不限制），上述预算是唯一的限制。自行注册钩子时请设置相同的值。
 
 子代理通过 `SubagentStart` 钩子继承父会话的列表，无需调用模型（Codex 不向子代理发送 `UserPromptSubmit`）。父会话尚无列表时，子代理得到未排序的目录。恢复会话不重新注入，分叉会话重新排序。根会话压缩后从缓存恢复，无需调用模型，可能在下一轮生效；Codex 不向子代理发送此事件。缓存保存 30 天。评分失败时按目录顺序注入、缓存并提示错误码；目录读取失败则在下一次提交时重试。
 
@@ -47,6 +49,7 @@ include_instructions = false
 | model | gpt-6-luna | 提供商支持的辅助模型 |
 | reasoningEffort | medium | 模型支持的推理强度 |
 | searchMaxResults | 10 | 搜索结果上限，1–50 |
+| initialMinRelevance | 0.8 | 首轮非固定技能的最低相关性，0–1，含端点 |
 | searchMinRelevance | 0.8 | 搜索最低相关性，0–1，含端点 |
 | timeoutMs | 45000 | 一次请求共享的 app-server 时限，1,000–120,000 毫秒 |
 | codexBin | codex | 可执行文件名或绝对路径 |
@@ -62,3 +65,14 @@ include_instructions = false
 `--dashboard [--port 端口]` 手动启动面板；macOS 下用 `--install-app-startup` / `--remove-app-startup` 管理 LaunchAgent。升级后请重新安装其独立脚本。自动启动的服务空闲 30 分钟后退出。其他平台可使用钩子启动面板。
 
 开发：依次执行 `npm ci`、`npm run build`、`npm test`。测试使用模拟 Codex 进程。`npm run dashboard:demo` 使用独立模拟数据启动面板。
+
+### `create_thread` 新会话
+
+父会话的 `PreToolUse` 钩子按新会话的 `prompt` 排序技能并追加目录，保留其他参数，
+避免重复追加和污染父会话缓存。无项目会话仅使用中立临时目录发现的 user/system/admin
+技能。本地项目通过桌面应用只读 `list_projects` 解析项目 ID，再读取来源目录。
+新 worktree 使用所选项目的主/来源工作区；目标目录无需已存在，并明确附加：
+"Skills were taken from the main worktree and, in rare cases, may have drifted from this worktree."
+此目录不代表已验证的目标 worktree 内容。远程、云端及无法解析的项目不注入本地目录。
+查找依赖 `CODEX_APP_TOOLS_PIPE_PATH` 和随应用提供的内部协议；协议可能随版本变化，
+不会读取应用私有状态文件。首次 `UserPromptSubmit` 未触发时，无法预先填充未知子会话的压缩缓存。
