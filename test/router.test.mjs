@@ -626,3 +626,22 @@ test('bundled spawn hook registration, rewrite, disabled mode and config failure
   assert.equal(bad.decision, undefined); assert.equal(bad.hookSpecificOutput, undefined);
   assert.match(bad.systemMessage, /SKILLS_CONFIG_INVALID/);
 });
+
+test('failed spawn rerouting removes stale task, cwd and model catalogs', async t => {
+  const f = await fixture(t), input = spawnInput(f);
+  const args = (await route(input, f.config)).hookSpecificOutput.updatedInput;
+  const cases = [{ ...args, message: args.message.replace('Fix child task', 'Different task') },
+    { ...args, cwd: join(f.cwd, 'missing') }, { ...args, model: 'different-model' }];
+  for (const changed of cases) {
+    await f.state('badConfig');
+    const result = await route({ ...input, tool_input: changed }, f.config);
+    const message = changed.message.split('\n\n<!-- skill-router:subagent:')[0];
+    assert.deepEqual(result.hookSpecificOutput.updatedInput, { ...changed, message });
+    assert.match(result.systemMessage, /stale catalog removed/);
+    await writeFile(f.configFile, '{broken');
+    assert.deepEqual(f.call(JSON.stringify({ ...input, tool_input: changed }))[0].hookSpecificOutput.updatedInput,
+      { ...changed, message });
+  }
+  assert.equal(f.call(JSON.stringify({ ...input, tool_input: args }))[0].hookSpecificOutput, undefined);
+  await assert.rejects(stat(sessionPath(f.dataDir, 's')), { code: 'ENOENT' });
+});

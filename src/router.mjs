@@ -216,6 +216,25 @@ function attachedCatalog(message) {
   } catch { return null; }
 }
 
+function spawnContext(input, args) {
+  if (typeof input.cwd !== 'string' || !isAbsolute(input.cwd) || input.cwd.includes('\0') ||
+      (args.cwd !== undefined && (typeof args.cwd !== 'string' || !args.cwd.trim() || args.cwd.includes('\0'))))
+    throw fail('SKILLS_INPUT_INVALID');
+  return { cwd: resolve(input.cwd, args.cwd ?? '.'), model: args.model ?? input.model };
+}
+function stripInvalidatedAgentCatalog(input) {
+  const args = input?.tool_input;
+  if (!spawnTools.has(input?.tool_name) || !isObject(args)) return {};
+  const attached = attachedCatalog(args.message);
+  if (!attached) return {};
+  try {
+    const { cwd, model } = spawnContext(input, args);
+    if (attached.metadata.key === taskKey(attached.task, cwd, model)) return {};
+  } catch { /* An invalid destination cannot validate the old catalog. */ }
+  return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow',
+    updatedInput: { ...args, message: attached.task } } };
+}
+
 // Rank before spawning; the child id is not known yet. Never use or update the
 // calling agent's cache, including when this is a nested spawn.
 async function spawnAgent(input, config) {
@@ -225,11 +244,7 @@ async function spawnAgent(input, config) {
   let client, event, output = {};
   const started = performance.now();
   try {
-    if (typeof input.cwd !== 'string' || !isAbsolute(input.cwd) || input.cwd.includes('\0') ||
-        (args.cwd !== undefined && (typeof args.cwd !== 'string' || !args.cwd.trim() || args.cwd.includes('\0'))))
-      throw fail('SKILLS_INPUT_INVALID');
-    const cwd = resolve(input.cwd, args.cwd ?? '.');
-    const model = args.model ?? input.model;
+    const { cwd, model } = spawnContext(input, args);
     const attached = attachedCatalog(args.message);
     const task = attached?.task ?? args.message;
     const key = taskKey(task, cwd, model);
@@ -246,7 +261,8 @@ async function spawnAgent(input, config) {
     if (event.errorCode) output.systemMessage = `Skill Router helper unavailable (${event.errorCode}); using catalog order.`;
   } catch (error) {
     if (event) event.errorCode = errorCode(error);
-    output = { systemMessage: `Skill Router unavailable for subagent (${errorCode(error)}); task message unchanged.` };
+    const stripped = stripInvalidatedAgentCatalog(input);
+    output = { ...stripped, systemMessage: `Skill Router unavailable for subagent (${errorCode(error)}); ${stripped.hookSpecificOutput ? 'stale catalog removed' : 'task message unchanged'}.` };
   } finally {
     client?.close();
     if (event) {
@@ -377,10 +393,11 @@ async function main() {
   let config;
   try { config = await loadConfig(); } catch (error) {
     if (input?.hook_event_name === 'PreToolUse') {
-      const output = stripInvalidatedThreadCatalog(input);
+      const output = input.tool_name === 'mcp__codex_app__create_thread'
+        ? stripInvalidatedThreadCatalog(input) : stripInvalidatedAgentCatalog(input);
       return { ...output, systemMessage: errorCode(error) + (output.hookSpecificOutput ? '; stale catalog removed.' : '') };
     }
-    if (['SessionStart'].includes(input?.hook_event_name)) return { systemMessage: errorCode(error) };
+    if (input?.hook_event_name === 'SessionStart') return { systemMessage: errorCode(error) };
     throw error;
   }
   if (['--install-app-startup', '--app-startup-check'].includes(process.argv[2])) {
