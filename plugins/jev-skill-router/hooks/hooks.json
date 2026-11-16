@@ -37,6 +37,19 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^mcp__codex_app__create_thread$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "exec \"${CODEX_MCP_NODE_PATH:-node}\" \"${PLUGIN_ROOT}/scripts/router.mjs\"",
+            "timeout": 130,
+            "statusMessage": "Ranking skills for new chat"
+          }
+        ]
+      }
     ]
   }
 }

@@ -63,3 +63,14 @@ include_instructions = false
 `--dashboard [--port 端口]` 手动启动面板；macOS 下用 `--install-app-startup` / `--remove-app-startup` 管理 LaunchAgent。升级后请重新安装其独立脚本。自动启动的服务空闲 30 分钟后退出。其他平台可使用钩子启动面板。
 
 开发：依次执行 `npm ci`、`npm run build`、`npm test`。测试使用模拟 Codex 进程。`npm run dashboard:demo` 使用独立模拟数据启动面板。
+
+### `create_thread` 新会话
+
+父会话的 `PreToolUse` 钩子按新会话的 `prompt` 排序技能并追加目录，保留其他参数，
+避免重复追加和污染父会话缓存。无项目会话仅使用中立临时目录发现的 user/system/admin
+技能。本地项目通过桌面应用只读 `list_projects` 解析项目 ID，再读取来源目录。
+新 worktree 使用所选项目的主/来源工作区；目标目录无需已存在，并明确附加：
+"Skills were taken from the main worktree and, in rare cases, may have drifted from this worktree."
+此目录不代表已验证的目标 worktree 内容。远程、云端及无法解析的项目不注入本地目录。
+查找依赖 `CODEX_APP_TOOLS_PIPE_PATH` 和随应用提供的内部协议；协议可能随版本变化，
+不会读取应用私有状态文件。首次 `UserPromptSubmit` 未触发时，无法预先填充未知子会话的压缩缓存。

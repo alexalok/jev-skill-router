@@ -65,3 +65,36 @@ Run `node "<plugin-root>/scripts/router.mjs" --list` to inspect eligible skills.
 Use `--dashboard [--port PORT]` for manual startup, or `--install-app-startup` / `--remove-app-startup` for the macOS LaunchAgent. Reinstall the helper after upgrading its standalone script. Automatic servers exit after 30 minutes idle. Other platforms can use hook startup.
 
 From a checkout: `npm ci`, `npm run build`, `npm test`. Tests use a fake Codex process. `npm run dashboard:demo` starts a separate dashboard with synthetic history.
+
+### Opening chats with `create_thread`
+
+A parent-side `PreToolUse` hook ranks the opening `prompt` and appends the selected
+catalog before Codex creates the chat, including when its first turn skips
+`UserPromptSubmit`. Other tool arguments are preserved. Repeated routing of the
+same enriched prompt does not append another catalog; changed tasks or targets
+are ranked again. Parent session caches are never used or replaced.
+
+- Projectless chats: discover user/system/admin skills from a neutral temporary
+  directory, excluding repository scopes.
+- Local projects: resolve `projectId` using the desktop app's read-only
+  `list_projects` tool and discover skills in the returned source checkout.
+- New worktrees: use the selected project's source checkout before the destination
+  exists. The injected catalog explicitly says: "Skills were taken from the main
+  worktree and, in rare cases, may have drifted from this worktree."
+  These are source skills, not verified destination contents or paths.
+- Remote/cloud targets are not represented by local catalogs. Missing app pipe,
+  unknown project, inaccessible path, or lookup failure leaves the prompt unchanged
+  with a diagnostic. Helper ranking failures retain the existing unranked fallback.
+
+Project lookup uses `CODEX_APP_TOOLS_PIPE_PATH`, supplied by the desktop runtime,
+with the bundled Codex App Tools framed JSON-RPC protocol. This internal transport
+can change between app versions; no private app database or state files are read.
+Child compaction can restore the catalog if `UserPromptSubmit` receives the enriched
+opening prompt; when that event never fires, the parent cannot seed the unknown
+child's cache. Use `search_skills` for current destination contents as needed.
+
+On macOS, the desktop app verifies pipe-client process identity. The create-thread
+hook uses `exec "${CODEX_MCP_NODE_PATH:-node}"` so the app-provided signed Node
+runtime connects directly under the hook host. An arbitrary system Node process
+may be rejected. The fallback remains usable for projectless routing; project
+lookup fails unchanged if the pipe or required runtime identity is unavailable.
