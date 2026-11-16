@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { catalogBudget, catalogLine, contextWindow, eligibleSkills, pinnedFirst, render } from '../src/catalog.mjs';
 import { rank, makeBatches } from '../src/ranker.mjs';
 import { sessionPath, acquire, prepareSessions, retireStale } from '../src/session-state.mjs';
-import { loadConfig, route } from '../src/router.mjs';
+import { loadConfig, route, search } from '../src/router.mjs';
 
 const fake = resolve('test/fake-codex.mjs'), bundle = resolve('plugins/jev-skill-router/scripts/router.mjs');
 async function fixture(t) {
@@ -18,7 +18,7 @@ async function fixture(t) {
     JEV_SKILL_ROUTER_DISABLED: '0', JEV_CODEX_BIN: fake };
   const settings = { model:'custom', reasoningEffort:'high', dashboardAutoStart:false, searchMaxResults:2, timeoutMs:4000 };
   await writeFile(configFile,JSON.stringify(settings));
-  const config = await loadConfig(env), catalog = [];
+  const config = { ...await loadConfig(env), initialMinRelevance: 0.1 }, catalog = [];
   for (let i=0;i<12;i++) {
     const root = join(cwd,'skill'+i), path=join(root,'SKILL.md');
     await mkdir(root); await writeFile(path,'PRIVATE_BODY');
@@ -40,10 +40,10 @@ test('config defaults, migration, bounds and invalid stdin',async t=>{
   const f=await fixture(t);
   await writeFile(f.configFile,JSON.stringify({model:'jev-latest',apiKey:'old',threshold:0,maxSkills:0}));
   const config=await loadConfig(f.env);
-  assert.deepEqual([config.model,config.reasoningEffort,config.searchMaxResults,config.searchMinRelevance,config.timeoutMs],['gpt-6-luna','medium',10,0.8,45000]);
+  assert.deepEqual([config.model,config.reasoningEffort,config.initialMinRelevance,config.searchMaxResults,config.searchMinRelevance,config.timeoutMs],['gpt-6-luna','medium',0.8,10,0.8,45000]);
   assert.deepEqual(config.obsolete,['apiKey','threshold','maxSkills']); assert(!('apiKey' in config));
   assert.match(f.call('{')[0].reason,/SKILLS_INPUT_INVALID/);
-  for (const bad of [{unexpected:true},{timeoutMs:999},{timeoutMs:120001},{searchMaxResults:51},{searchMinRelevance:-0.1},{reasoningEffort:''},{dashboardPort:0},{dataDir:'relative'}]) {
+  for (const bad of [{unexpected:true},{timeoutMs:999},{timeoutMs:120001},{searchMaxResults:51},{searchMinRelevance:-0.1},{initialMinRelevance:-0.1},{initialMinRelevance:1.01},{initialMinRelevance:'0.1'},{reasoningEffort:''},{dashboardPort:0},{dataDir:'relative'}]) {
     await writeFile(f.configFile,JSON.stringify(bad)); await assert.rejects(loadConfig({ ...f.env, JEV_SKILL_ROUTER_DATA_DIR:undefined }),/SKILLS_CONFIG_INVALID/);
   }
   await writeFile(f.configFile,"{broken");
@@ -69,13 +69,54 @@ test('one ranked injection per session and agent; compaction needs no Codex',asy
   const pair=await Promise.all([route(f.input,f.config),route(f.input,f.config)]);
   const block=pair.find(x=>x.hookSpecificOutput)?.hookSpecificOutput.additionalContext;
   assert.equal(pair.filter(x=>!Object.keys(x).length).length,1);
-  assert(block.indexOf('- skill10:')<block.indexOf('- skill9:')); assert.equal((block.match(/^- skill/gmu)||[]).length,12);
+  assert(block.indexOf('- skill10:')<block.indexOf('- skill9:')); assert.equal((block.match(/^- skill/gmu)||[]).length,11);
   assert.deepEqual(await route(f.input,f.config),{}); assert.equal((await f.calls()).filter(x=>x==='turn/start').length,1);
   assert((await route({...f.input,agent_id:'child'},f.config)).hookSpecificOutput);
   const compact=await route({...f.input,hook_event_name:'SessionStart',source:'compact'}, {...f.config,codexBin:'/missing'});
   assert.equal(compact.hookSpecificOutput.additionalContext,block);
   assert.equal((await stat(sessionPath(f.dataDir,'s'))).mode & 0o777,0o600);
   await f.state('ok',{}); assert.equal((await route(f.input,f.config)).decision,'block');
+});
+
+test('initial cutoff, pinned override, empty results and fallback agree with history',async t=>{
+  const f=await fixture(t), run=async (id,cutoff=f.config.initialMinRelevance)=>{
+    const out=await route({...f.input,session_id:id},{...f.config,initialMinRelevance:cutoff});
+    const log=await readFile(join(f.dataDir,new Date().toISOString().slice(0,10)+'.jsonl'),'utf8');
+    const event=JSON.parse(log.trim().split('\n').at(-1));
+    assert.equal(event.sessionId,id); assert.equal(event.candidateCount,f.catalog.length);
+    assert.equal(event.omittedCount,event.candidateCount-event.selected.length);
+    return [out.hookSpecificOutput.additionalContext,event];
+  };
+  let [block,event]=await run('boundary',0.9);
+  assert.deepEqual(event.selected.map(s=>s.name),['skill10','skill11','skill9']);
+  assert.equal(event.threshold,0.9); assert(!block.includes('additional skills omitted'));
+  await search({task_description:'task',cwd:f.cwd},{...f.config,searchMinRelevance:0.3});
+  const instructions=(await readFile(join(f.cwd,'instructions'),'utf8')).trim().split('\n');
+  assert(instructions[0].includes('Skills scored below 0.9 are dropped'));
+  assert(instructions[1].includes('Skills scored below 0.3 are dropped'));
+  await f.state('zero');
+  [block,event]=await run('none');
+  assert.equal(event.status,'none'); assert.equal(event.threshold,0.1); assert.deepEqual(event.selected,[]);
+  assert.match(block,/No skills were found relevant.*search_skills/);
+  assert.doesNotMatch(block,/Available skills|most to least relevant/);
+  [,event]=await run('zero-cutoff',0); assert.equal(event.selected.length,12);
+  await mkdir(join(f.cwd,'skill0','agents'));
+  await writeFile(join(f.cwd,'skill0','agents','openai.yaml'),'policy: {skill_router_always_injected_in_initial_turn: true}');
+  await f.state('zero',{include_instructions:false,max_context_tokens:0});
+  [block,event]=await run('pinned',1);
+  assert.equal(event.status,'selected'); assert.deepEqual(event.selected,[{name:'skill0',path:f.catalog[0].path,probability:1}]);
+  assert.match(block,/No other skills were found relevant.*search_skills/); assert.match(block,/### Available skills\n- skill0:/);
+  await f.state('ok',{include_instructions:false,max_context_tokens:0});
+  [block,event]=await run('budget',0.9);
+  assert.equal(event.omittedCount,11); assert.match(block,/2 additional skills omitted/);
+  assert.doesNotMatch(block,/No other skills were found/);
+  await f.state('request');
+  [block,event]=await run('failure',1);
+  assert.match(block,/not ranked/); assert.equal(event.status,'unranked'); assert.equal(event.threshold,null);
+  assert.equal(event.selected.length,12); assert(event.selected.every(s=>s.probability===null));
+  f.catalog.length=0; await f.state('ok');
+  [block,event]=await run('empty');
+  assert.equal(event.status,'no_candidates'); assert.match(block,/No skills were found relevant/);
 });
 
 test('catalog failure retries; stale lock recoverable; helper errors cached unranked',async t=>{
@@ -144,7 +185,7 @@ test('budget tiers, filtering and UTF-8 batching',async t=>{
   const ranked=await rank('task',big,{async structuredTurn(text) {
     active++;max=Math.max(max,active); await new Promise(r=>setImmediate(r));active--;
     return JSON.stringify({scores:[...text.matchAll(/^(s\d+) \|/gmu)].map(m=>({id:m[1],relevance:0.5}))});
-  }},{},{});
+  }},{},{},0);
   assert.equal(ranked.length,12); assert.equal(max,3);
 });
 
@@ -268,5 +309,5 @@ test('subagents inherit the parent list; without one they get the unranked catal
 test('catalog read waits for plugin skills that appear after login loads',async t=>{
   const f=await fixture(t); await f.state('late');
   const block=(await route(f.input,f.config)).hookSpecificOutput.additionalContext;
-  assert.equal((block.match(/^- skill/gmu)||[]).length,12); assert.match(block,/### Available skills\n- skill/);
+  assert.equal((block.match(/^- skill/gmu)||[]).length,11); assert.match(block,/### Available skills\n- skill/);
 });

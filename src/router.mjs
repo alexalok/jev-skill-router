@@ -25,6 +25,7 @@ export async function loadConfig(env = process.env) {
   const config = {
     reasoningEffort: saved.reasoningEffort ?? 'medium',
     model: typeof saved.model === 'string' && saved.model.startsWith('jev-') ? 'gpt-6-luna' : saved.model ?? 'gpt-6-luna',
+    initialMinRelevance: saved.initialMinRelevance ?? 0.8,
     searchMinRelevance: saved.searchMinRelevance ?? 0.8,
     searchMaxResults: saved.searchMaxResults ?? 10,
     timeoutMs: saved.timeoutMs ?? 45000,
@@ -37,7 +38,7 @@ export async function loadConfig(env = process.env) {
   const obsolete = ['apiKey', 'threshold', 'maxSkills'].filter(key => Object.hasOwn(saved, key));
   if (Object.keys(saved).some(key => !Object.hasOwn(config, key) && !obsolete.includes(key)) ||
       ![config.model, config.reasoningEffort].every(v => typeof v === 'string' && v.trim() && v.length <= 100) ||
-      !Number.isFinite(config.searchMinRelevance) || config.searchMinRelevance < 0 || config.searchMinRelevance > 1 ||
+      ![config.initialMinRelevance, config.searchMinRelevance].every(v => Number.isFinite(v) && v >= 0 && v <= 1) ||
       !Number.isInteger(config.searchMaxResults) || config.searchMaxResults < 1 || config.searchMaxResults > 50 ||
       !Number.isInteger(config.timeoutMs) || config.timeoutMs < 1000 || config.timeoutMs > 120000 ||
       typeof config.codexBin !== 'string' || !config.codexBin.trim() ||
@@ -147,11 +148,14 @@ export async function route(input, config) {
     event.budget = catalogBudget(effective, await contextWindow(effective, input.model));
     let ordered;
     // Pinned skills skip the helper; history records them at relevance 1.
-    try { ordered = [...skills.filter(s => s.pinned).map(s => ({ ...s, probability: 1 })), ...await rank(initialTask(input.prompt), skills.filter(s => !s.pinned), client, config, effective)]; }
-    catch (error) { event.errorCode = errorCode(error); ordered = pinnedFirst(skills); }
+    try {
+      const ranked = await rank(initialTask(input.prompt), skills.filter(s => !s.pinned), client, config, effective, config.initialMinRelevance);
+      ordered = [...skills.filter(s => s.pinned).map(s => ({ ...s, probability: 1 })), ...ranked];
+      event.threshold = config.initialMinRelevance;
+    } catch (error) { event.errorCode = errorCode(error); ordered = pinnedFirst(skills); }
     const rendered = render(ordered, event.budget, event.errorCode && 'helper unavailable: ' + event.errorCode);
     event.selected = rendered.selected.map(selectedRecord);
-    event.omittedCount = rendered.omittedCount;
+    event.omittedCount = skills.length - event.selected.length;
     event.status = event.errorCode ? 'unranked' : !skills.length ? 'no_candidates' : event.selected.length ? 'selected' : 'none';
     output = context('UserPromptSubmit', rendered.block);
     if (event.errorCode) output.systemMessage = `Skill Router helper unavailable (${event.errorCode}); using catalog order.`;
@@ -182,7 +186,7 @@ export async function search({ task_description: task, cwd }, config) {
     effective = await guard(client, cwd);
     const skills = (await eligibleSkills(await client.listSkills(cwd))).filter(s => s.implicit);
     event.candidateCount = skills.length;
-    const selected = (await rank(task, skills, client, config, effective)).filter(s => s.probability >= config.searchMinRelevance).slice(0, config.searchMaxResults);
+    const selected = (await rank(task, skills, client, config, effective, config.searchMinRelevance)).slice(0, config.searchMaxResults);
     event.selected = selected.map(selectedRecord); event.omittedCount = skills.length - selected.length;
     event.status = !skills.length ? 'no_candidates' : selected.length ? 'selected' : 'none';
     return selected.map(s => s.probability.toFixed(2) + ' ' + catalogLine(s)).join('\n') || 'No skill met the relevance threshold.';
