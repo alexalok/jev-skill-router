@@ -21,7 +21,7 @@ for await (const line of createInterface({ input: process.stdin })) {
   assert(initialized);
   if (method === 'config/read') {
     if (data.mode === 'badConfig') send({ id, error: {} });
-    else ok({ config: { skills: data.skills, mcp_servers: p.cwd === cwd ? { project: {} } : { user: {} } } });
+    else ok({ config: { skills: data.skills, plugins: data.plugins, mcp_servers: p.cwd === cwd ? { project: {} } : { user: {} } } });
   } else if (method === 'skills/list') {
     // Like real Codex, plugin skills (the second half here) appear only after a few reads.
     assert.deepEqual(p.cwds, [cwd]); assert.equal(p.forceReload, true);

@@ -6,7 +6,10 @@
         "scripts/router.mjs",
         "--mcp"
       ],
-      "cwd": "."
+      "cwd": ".",
+      "env_vars": [
+        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE"
+      ]
     }
   }
 }

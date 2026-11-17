@@ -80,6 +80,8 @@ export async function openClient({ codexBin, timeoutMs }, cwd) {
     return result.config;
   }
   return { close, readConfig, async listSkills(dir) {
+    const config = await readConfig(dir);
+    const expectsPlugins = Object.values(config.plugins ?? {}).some(plugin => plugin?.enabled === true);
     // A fresh app-server lists no plugin skills until shortly after its login has loaded
     // (account/updated). Accept a catalog once two reads after that agree, or after 3 s.
     for (let stable = -1;;) {
@@ -87,7 +89,12 @@ export async function openClient({ codexBin, timeoutMs }, cwd) {
       const result = await request('skills/list', { cwds: [dir], forceReload: true });
       const entry = result?.data?.find(e => typeof e?.cwd === 'string' && resolve(e.cwd) === resolve(dir));
       if (!Array.isArray(entry?.skills)) throw fail('SKILLS_CATALOG_INVALID');
-      if (settled && (entry.skills.length === stable || Date.now() - opened > 3000)) return entry;
+      if (settled && (entry.skills.length === stable || Date.now() - opened > 3000)) {
+        // Enabled plugins can include skills; never silently rank a plugin-free catalog.
+        if (expectsPlugins && !entry.skills.some(skill => typeof skill.pluginId === 'string' && skill.pluginId)) {
+          if (Date.now() - opened > 3000) throw fail('SKILLS_PLUGIN_CATALOG_MISSING');
+        } else return entry;
+      }
       stable = settled ? entry.skills.length : -1;
       await new Promise(done => setTimeout(done, 150));
     }

@@ -202,6 +202,7 @@ test('MCP schema, paths, search threshold/limit, guard errors and history',async
   const history=await readFile(join(f.dataDir,new Date().toISOString().slice(0,10)+'.jsonl'),'utf8');
   assert(!history.includes('Search task'));assert.equal(JSON.parse(history.trim().split('\n')[0]).source,'search');
   const root=resolve('plugins/jev-skill-router'), mcp=JSON.parse(await readFile(join(root,'.mcp.json'))).mcpServers['skill-router'];
+  assert.deepEqual(mcp.env_vars, ['CODEX_INTERNAL_ORIGINATOR_OVERRIDE']);
   assert.equal(mcp.cwd,'.');assert.deepEqual(mcp.args,['scripts/router.mjs','--mcp']);assert((await stat(join(root,mcp.cwd,mcp.args[0]))).isFile());
 });
 
@@ -644,4 +645,20 @@ test('failed spawn rerouting removes stale task, cwd and model catalogs', async 
   }
   assert.equal(f.call(JSON.stringify({ ...input, tool_input: args }))[0].hookSpecificOutput, undefined);
   await assert.rejects(stat(sessionPath(f.dataDir, 's')), { code: 'ENOENT' });
+});
+
+test('enabled plugins without plugin catalog fail before ranking', async t => {
+  const f = await fixture(t);
+  await writeFile(join(f.cwd, 'fake.json'), JSON.stringify({ skills: { include_instructions: false }, catalog: f.catalog, plugins: { 'example@market': { enabled: true } } }));
+  await assert.rejects(search({ task_description: 'worktree', cwd: f.cwd }, f.config), { code: 'SKILLS_PLUGIN_CATALOG_MISSING' });
+  assert(!(await f.calls()).includes('turn/start'));
+});
+
+test('plugin catalog is accepted and disabled plugins do not require skills', async t => {
+  const f = await fixture(t);
+  for (const enabled of [false, true]) {
+    if (enabled) f.catalog[0].pluginId = 'example@market';
+    await writeFile(join(f.cwd, 'fake.json'), JSON.stringify({ skills: { include_instructions: false }, catalog: f.catalog, plugins: { 'example@market': { enabled } } }));
+    assert.match(await search({ task_description: 'worktree', cwd: f.cwd }, f.config), /skill/);
+  }
 });
