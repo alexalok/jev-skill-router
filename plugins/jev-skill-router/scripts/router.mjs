@@ -8218,12 +8218,18 @@ async function openClient({ codexBin, timeoutMs }, cwd) {
     return result2.config;
   }
   return { close, readConfig, async listSkills(dir) {
+    const config = await readConfig(dir);
+    const expectsPlugins = Object.values(config.plugins ?? {}).some((plugin) => plugin?.enabled === true);
     for (let stable = -1; ; ) {
       const settled = Date.now() - authLoaded > 300 || Date.now() - opened > 3e3;
       const result2 = await request("skills/list", { cwds: [dir], forceReload: true });
       const entry = result2?.data?.find((e) => typeof e?.cwd === "string" && resolve3(e.cwd) === resolve3(dir));
       if (!Array.isArray(entry?.skills)) throw fail("SKILLS_CATALOG_INVALID");
-      if (settled && (entry.skills.length === stable || Date.now() - opened > 3e3)) return entry;
+      if (settled && (entry.skills.length === stable || Date.now() - opened > 3e3)) {
+        if (expectsPlugins && !entry.skills.some((skill) => typeof skill.pluginId === "string" && skill.pluginId)) {
+          if (Date.now() - opened > 3e3) throw fail("SKILLS_PLUGIN_CATALOG_MISSING");
+        } else return entry;
+      }
       stable = settled ? entry.skills.length : -1;
       await new Promise((done) => setTimeout(done, 150));
     }

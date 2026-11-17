@@ -111,3 +111,14 @@ runtime connects directly under the hook host. An arbitrary system Node process
 may be rejected. The fallback remains usable for projectless routing; project
 lookup cannot proceed if the pipe or required runtime identity is unavailable;
 the task is preserved and any invalidated catalog is removed.
+
+### Missing plugin catalogs
+
+The MCP server forwards `CODEX_INTERNAL_ORIGINATOR_OVERRIDE` from its host so the
+helper app-server can discover the same plugin skills as Codex Desktop. It does
+not invent a Desktop identity for other hosts. If configuration contains enabled
+plugins but discovery returns no plugin skills after the startup window, routing
+fails with `SKILLS_PLUGIN_CATALOG_MISSING` instead of ranking an incomplete list.
+This conservative check also rejects installations whose enabled plugins contain
+no skills; it cannot detect a catalog missing only some plugins. Check the host's
+environment and plugin availability if this error appears.
