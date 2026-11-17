@@ -70,7 +70,9 @@ Batching: all candidates go in one turn while the request stays under 60,000 UTF
 
 Flow for `UserPromptSubmit`:
 
-1. Start the client, `config/read` for the hook cwd. Run the guard (below). This happens on every prompt and costs roughly 0.5 s; it makes no model call.
+0. Before loading router config, starting the dashboard, or opening Codex, skip null/missing `transcript_path`. Otherwise inspect only the first transcript line, bounded to 256 KiB, for `type: session_meta` and either `payload.thread_source === "guardian_review"` or `payload.source.subagent.other === "guardian"`. Return `{}` without guard, ranking, cache, or history. This deliberately exempts internal threads from the native-instructions guard; enforcing a routing prerequisite on excluded threads could block app housekeeping. Unreadable, malformed, oversized, and unknown metadata falls through to normal guarded routing. No database lookup is used. This filter applies only to `UserPromptSubmit`; parent-side `PreToolUse`, search, and `SessionStart` compaction restore retain their existing behavior.
+
+1. Start the client, `config/read` for the hook cwd. Run the guard (below). This happens on every eligible prompt and costs roughly 0.5 s; it makes no model call.
 2. Session key = `sha256(session_id + "\0" + (agent_id ?? "root"))`, so a prompt addressed to a subagent is tracked separately. If `<dataDir>/sessions/<key>.json` exists, return `{}`: no ranking, no injection. A missing `session_id` is treated as "always initial". Resume keeps the id, so a resumed session is not re-injected.
 3. Take a per-key lock: exclusive-create `<key>.lock`. If it is held and younger than `timeoutMs` + 5 s, another hook is already ranking this session (steered or queued input): return `{}`. An older lock is stale and is taken over. The lock is removed when the hook finishes, on success or failure.
 4. `skills/list` → `eligibleSkills` → rank with the helper.
@@ -136,7 +138,7 @@ Behaviour: guard → catalog → rank → keep relevance >= `searchMinRelevance`
 
 `config/read` for the task cwd must return `skills.include_instructions === false`. Otherwise:
 
-- `UserPromptSubmit` returns `{decision:"block", reason:"Skill Router requires skills.include_instructions = false ..."}` with the two-line config fix. Codex does not process the prompt. The check runs on every prompt.
+- `UserPromptSubmit` returns `{decision:"block", reason:"Skill Router requires skills.include_instructions = false ..."}` with the two-line config fix. Codex does not process the prompt. The check runs on every eligible prompt.
 - `search_skills` returns `isError` with the same text.
 - One guard boundary: in the `UserPromptSubmit` path, any failure before `include_instructions === false` is confirmed produces a block. That includes unparsable hook stdin, an invalid router config, a missing Codex binary and an app-server error. The reason carries the error code and, for a missing binary, the hint to set `codexBin` to an absolute path (the desktop app's `PATH` may not contain `codex`). Failures after the guard passed never block.
 - `JEV_SKILL_ROUTER_DISABLED=1` remains the escape hatch and skips the guard.
@@ -218,3 +220,25 @@ runtime connects directly under the hook host. An arbitrary system Node process
 may be rejected. The fallback remains usable for projectless routing; project
 lookup cannot proceed if the pipe or required runtime identity is unavailable;
 the task is preserved and any invalidated catalog is removed.
+
+## Internal-thread evidence (2026-11-16)
+
+Read-only inspection of today's rollout headers confirmed both `thread_source:
+"guardian_review"` and `source: {"subagent":{"other":"guardian"}}`. Normal chats
+use `source: "vscode"`; real subagents have `source.subagent.thread_spawn`.
+At inspection time, 74 guardian rollouts had no matching session IDs in router
+selection history. This does not prove hooks never fire; the guardian exclusion
+is defensive. No private app database was read.
+
+[Codex issue #56795](https://github.com/openai/codex/issues/56795) reports real
+`Stop` payloads with `transcript_path: null` for hidden helpers. That report alone
+does not establish the `UserPromptSubmit` payload on this installation.
+
+A temporary metadata-only hook probe on this installation captured
+`UserPromptSubmit` for a hidden session with the `transcript_path` key present and
+its value null. No rollout file existed for its session ID. The installed 0.5.0 router
+recorded the same session as `initial / none`, taking 16,798 ms. A normal chat's
+`UserPromptSubmit` in the same capture carried a real rollout path. This confirms
+the null-path signal for the affected routing event, rather than inferring it
+from `Stop`. No guardian session appeared in the captured events. The probe
+recorded only event/session/path metadata, and hooks.json was restored byte-for-byte.

@@ -20,11 +20,15 @@ codex plugin add jev-skill-router@jev-skill-router
 include_instructions = false
 ```
 
-每次提交消息时，钩子都会检查任务目录的持久化有效配置。无法确认上述值时会阻止提交并说明原因。只有原生设置不兼容时才提示修改 TOML；其他错误会指出无法验证的原因。输入损坏、路由配置无效、找不到 Codex 也会阻止提交。桌面应用找不到 Codex 时，请把 `codexBin` 设为可执行文件的绝对路径。
+每次提交符合路由条件的消息时，钩子都会检查任务目录的持久化有效配置。无法确认上述值时会阻止提交并说明原因。只有原生设置不兼容时才提示修改 TOML；其他错误会指出无法验证的原因。输入损坏、路由配置无效、找不到 Codex 也会阻止提交。桌面应用找不到 Codex 时，请把 `codexBin` 设为可执行文件的绝对路径。
 
 若钩子未启用或未受信任、缺少 Node、进程崩溃或钩子超时，Codex 仍可能放行消息。钩子看不到调用方临时传入的 `-c skills.include_instructions=true`、`--profile` 或应用内覆盖值。`JEV_SKILL_ROUTER_DISABLED=1` 可跳过钩子及检查。停用插件后请恢复原生技能说明。
 
 ## 路由与搜索
+
+当 `UserPromptSubmit` 的 `transcript_path` 为 null 或缺失，或转录首行 `session_meta` 标识守护审查线程时，直接返回 `{}`。识别字段为 `payload.thread_source: "guardian_review"`，兼容信号为 `payload.source.subagent.other: "guardian"`。这些内部线程不参与技能路由，因此跳过配置及原生技能说明检查，不调用排序模型、不写会话缓存或选择历史，也不启动仪表盘。
+
+只读取转录首行（最多 256 KiB），不读取应用数据库。文件不可读、元数据损坏、过大或类型未知时，保留正常路由及配置检查。普通聊天、子代理、旁支对话、分叉、自动化和 `create_thread` 创建的聊天仍可路由；`PreToolUse`、搜索及压缩恢复路径保持不变。
 
 辅助模型仅接收任务、技能名称和简短描述。插件不读取 SKILL.md 正文；只检查策略元数据，排除禁止隐式调用、已禁用、重复或失效的技能。每批评分使用全新空目录中的临时只读线程，关闭工具。用户级提供商、自定义 base URL 和全局指令仍有效；项目级提供商覆盖不适用。任务和描述会发送给该提供商。
 

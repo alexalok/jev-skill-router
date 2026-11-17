@@ -7457,7 +7457,8 @@ async function resolveProject(target, input) {
 }
 
 // src/router.mjs
-import { mkdtemp as mkdtemp2, realpath as realpath3, rm as rm3, readFile as readFile5 } from "node:fs/promises";
+import { mkdtemp as mkdtemp2, realpath as realpath3, rm as rm3, readFile as readFile5, open } from "node:fs/promises";
+import { constants } from "node:fs";
 import { homedir as homedir3, tmpdir as tmpdir2 } from "node:os";
 import { isAbsolute as isAbsolute5, join as join6, resolve as resolve4 } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -8756,6 +8757,35 @@ async function spawnAgent(input, config) {
   }
   return output;
 }
+async function skipInitialRouting(input) {
+  if (input?.hook_event_name !== "UserPromptSubmit") return false;
+  if (input.transcript_path == null) return true;
+  if (typeof input.transcript_path !== "string" || !isAbsolute5(input.transcript_path)) return false;
+  let file;
+  try {
+    file = await open(input.transcript_path, constants.O_RDONLY | constants.O_NONBLOCK);
+    if (!(await file.stat()).isFile()) return false;
+    const chunks = [];
+    let size = 0;
+    while (size < 256 * 1024) {
+      const buffer = Buffer.alloc(4096);
+      const { bytesRead } = await file.read(buffer);
+      const chunk = buffer.subarray(0, bytesRead);
+      const newline = chunk.indexOf(10);
+      chunks.push(newline < 0 ? chunk : chunk.subarray(0, newline));
+      size += bytesRead;
+      if (newline >= 0 || !bytesRead) {
+        const entry = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        return entry?.type === "session_meta" && (entry.payload?.thread_source === "guardian_review" || entry.payload?.source?.subagent?.other === "guardian");
+      }
+    }
+  } catch {
+  } finally {
+    await file?.close().catch(() => {
+    });
+  }
+  return false;
+}
 async function route(input, config) {
   if (!isObject(input) || typeof input.hook_event_name !== "string") return block(fail("SKILLS_INPUT_INVALID"));
   if (input.hook_event_name === "PreToolUse")
@@ -8769,6 +8799,7 @@ async function route(input, config) {
     }
   }
   if (input.hook_event_name !== "UserPromptSubmit") return {};
+  if (await skipInitialRouting(input)) return {};
   if (typeof input.prompt !== "string" || typeof input.cwd !== "string" || !isAbsolute5(input.cwd))
     return block(fail("SKILLS_INPUT_INVALID"));
   const cwd = resolve4(input.cwd), started = performance.now(), event = recordFor("initial", cwd, input.session_id, config);
@@ -8887,6 +8918,7 @@ async function main() {
       throw fail("SKILLS_INPUT_INVALID");
     }
   }
+  if (await skipInitialRouting(input)) return {};
   let config;
   try {
     config = await loadConfig();
