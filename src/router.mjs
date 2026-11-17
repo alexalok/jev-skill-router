@@ -1,5 +1,6 @@
 import { resolveProject } from './app-projects.mjs';
-import { mkdtemp, realpath, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, readFile, open } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -273,6 +274,37 @@ async function spawnAgent(input, config) {
   return output;
 }
 
+// Only initial prompt routing is filtered. Unknown metadata preserves routing.
+async function skipInitialRouting(input) {
+  if (input?.hook_event_name !== 'UserPromptSubmit') return false;
+  if (input.transcript_path == null) return true;
+  if (typeof input.transcript_path !== 'string' || !isAbsolute(input.transcript_path)) return false;
+  let file;
+  try {
+    // Nonblocking open plus regular-file check also avoids hanging on a FIFO.
+    file = await open(input.transcript_path, constants.O_RDONLY | constants.O_NONBLOCK);
+    if (!(await file.stat()).isFile()) return false;
+    const chunks = [];
+    let size = 0;
+    while (size < 256 * 1024) {
+      const buffer = Buffer.alloc(4096);
+      const { bytesRead } = await file.read(buffer);
+      const chunk = buffer.subarray(0, bytesRead);
+      const newline = chunk.indexOf(10);
+      chunks.push(newline < 0 ? chunk : chunk.subarray(0, newline));
+      size += bytesRead;
+      if (newline >= 0 || !bytesRead) {
+        const entry = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        return entry?.type === 'session_meta' &&
+          (entry.payload?.thread_source === 'guardian_review' ||
+           entry.payload?.source?.subagent?.other === 'guardian');
+      }
+    }
+  } catch { /* Missing, malformed or oversized metadata is not an exclusion. */ }
+  finally { await file?.close().catch(() => {}); }
+  return false;
+}
+
 export async function route(input, config) {
   if (!isObject(input) || typeof input.hook_event_name !== 'string') return block(fail('SKILLS_INPUT_INVALID'));
   if (input.hook_event_name === 'PreToolUse')
@@ -284,6 +316,7 @@ export async function route(input, config) {
     } catch { return { systemMessage: 'Skill Router cache unavailable (SKILLS_CACHE_UNAVAILABLE).' }; }
   }
   if (input.hook_event_name !== 'UserPromptSubmit') return {};
+  if (await skipInitialRouting(input)) return {};
   if (typeof input.prompt !== 'string' || typeof input.cwd !== 'string' || !isAbsolute(input.cwd))
     return block(fail('SKILLS_INPUT_INVALID'));
   const cwd = resolve(input.cwd), started = performance.now(), event = recordFor('initial', cwd, input.session_id, config);
@@ -390,6 +423,8 @@ async function main() {
   if (process.argv.length === 2) {
     try { input = JSON.parse(await boundedText(process.stdin, 8 * 1024 * 1024)); } catch { throw fail('SKILLS_INPUT_INVALID'); }
   }
+  // Excluded threads must not start the dashboard or enforce routing config.
+  if (await skipInitialRouting(input)) return {};
   let config;
   try { config = await loadConfig(); } catch (error) {
     if (input?.hook_event_name === 'PreToolUse') {

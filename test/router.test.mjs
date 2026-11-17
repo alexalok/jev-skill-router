@@ -26,7 +26,9 @@ async function fixture(t) {
   }
   const state = (mode,skills={include_instructions:false}) => writeFile(join(cwd,'fake.json'),JSON.stringify({mode,skills,catalog}));
   await state('ok');
-  const input = {hook_event_name:'UserPromptSubmit',session_id:'s',cwd,prompt:'New task'};
+  const transcript = join(cwd, 'rollout.jsonl');
+  await writeFile(transcript, JSON.stringify({ type: 'session_meta', payload: { source: 'vscode', thread_source: 'user' } }) + '\n');
+  const input = {hook_event_name:'UserPromptSubmit',session_id:'s',cwd,prompt:'New task',transcript_path:transcript};
   const call = (stdin, argv=[], overrides={}) => {
     const result=spawnSync(process.execPath,[bundle,...argv],{env:{...env,...overrides},input:stdin,encoding:'utf8',timeout:8000});
     assert.equal(result.status,0,result.stderr || result.error?.message);
@@ -72,7 +74,7 @@ test('one ranked injection per session and agent; compaction needs no Codex',asy
   assert(block.indexOf('- skill10:')<block.indexOf('- skill9:')); assert.equal((block.match(/^- skill/gmu)||[]).length,11);
   assert.deepEqual(await route(f.input,f.config),{}); assert.equal((await f.calls()).filter(x=>x==='turn/start').length,1);
   assert((await route({...f.input,agent_id:'child'},f.config)).hookSpecificOutput);
-  const compact=await route({...f.input,hook_event_name:'SessionStart',source:'compact'}, {...f.config,codexBin:'/missing'});
+  const compact=await route({...f.input,hook_event_name:'SessionStart',source:'compact',transcript_path:null}, {...f.config,codexBin:'/missing'});
   assert.equal(compact.hookSpecificOutput.additionalContext,block);
   assert.equal((await stat(sessionPath(f.dataDir,'s'))).mode & 0o777,0o600);
   await f.state('ok',{}); assert.equal((await route(f.input,f.config)).decision,'block');
@@ -661,4 +663,63 @@ test('plugin catalog is accepted and disabled plugins do not require skills', as
     await writeFile(join(f.cwd, 'fake.json'), JSON.stringify({ skills: { include_instructions: false }, catalog: f.catalog, plugins: { 'example@market': { enabled } } }));
     assert.match(await search({ task_description: 'worktree', cwd: f.cwd }, f.config), /skill/);
   }
+});
+
+// These cases catch routing before thread eligibility has been established.
+test('transcriptless prompts skip config guard, ranker, cache and history', async t => {
+  const f = await fixture(t);
+  await f.state('ok', { include_instructions: true });
+  for (const value of [null, undefined]) {
+    const input = { ...f.input, transcript_path: value };
+    assert.deepEqual(await route(input, f.config), {});
+  }
+  await assert.rejects(f.calls(), { code: 'ENOENT' });
+  await assert.rejects(stat(f.dataDir), { code: 'ENOENT' });
+});
+
+test('guardian metadata skips routing without starting Codex', async t => {
+  const f = await fixture(t);
+  for (const payload of [
+    { thread_source: 'guardian_review', source: 'vscode' },
+    { source: { subagent: { other: 'guardian' } } },
+  ]) {
+    await writeFile(f.input.transcript_path, JSON.stringify({ type: 'session_meta', payload }) + '\n');
+    assert.deepEqual(await route(f.input, { ...f.config, codexBin: '/missing' }), {});
+  }
+  await assert.rejects(f.calls(), { code: 'ENOENT' });
+  await assert.rejects(stat(f.dataDir), { code: 'ENOENT' });
+});
+
+test('other thread kinds retain initial routing', async t => {
+  const f = await fixture(t);
+  for (const kind of ['user', 'subagent', 'agent_created_thread', 'agent_forked_thread', 'automation', 'realtime_voice']) {
+    const source = kind === 'subagent' ? { subagent: { thread_spawn: { parent_thread_id: 'parent' } } } : 'vscode';
+    await writeFile(f.input.transcript_path, JSON.stringify({ type: 'session_meta', payload: { thread_source: kind, source } }) + '\n');
+    assert((await route({ ...f.input, session_id: kind }, f.config)).hookSpecificOutput);
+  }
+  assert.equal((await f.calls()).filter(x => x === 'turn/start').length, 6);
+});
+
+test('unreadable or unrecognized transcript metadata retains guarded routing', async t => {
+  const f = await fixture(t);
+  const headers = ['broken', '', JSON.stringify({ type: 'session_meta', payload: {} }),
+    JSON.stringify({ type: 'response_item', payload: { thread_source: 'guardian_review' } }),
+    JSON.stringify({ type: 'session_meta', payload: { source: { subagent: { other: 'reviewer' } } } }),
+    ' '.repeat(256 * 1024)];
+  for (const [i, header] of headers.entries()) {
+    await writeFile(f.input.transcript_path, header + '\n' + JSON.stringify({ type: 'session_meta', payload: { thread_source: 'guardian_review' } }));
+    assert((await route({ ...f.input, session_id: `unknown-${i}` }, f.config)).hookSpecificOutput);
+  }
+  assert((await route({ ...f.input, session_id: 'missing-file', transcript_path: join(f.cwd, 'missing') }, f.config)).hookSpecificOutput);
+  await f.state('ok', { include_instructions: true });
+  assert.equal((await route(f.input, f.config)).decision, 'block');
+});
+
+test('bundle skips excluded prompts before router config and dashboard startup', async t => {
+  const f = await fixture(t);
+  await writeFile(f.configFile, '{broken');
+  assert.deepEqual(f.call(JSON.stringify({ ...f.input, transcript_path: null })), [{}]);
+  await writeFile(f.input.transcript_path, JSON.stringify({ type: 'session_meta', payload: { thread_source: 'guardian_review' } }) + '\n');
+  assert.deepEqual(f.call(JSON.stringify(f.input)), [{}]);
+  await assert.rejects(stat(f.dataDir), { code: 'ENOENT' });
 });

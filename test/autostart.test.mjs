@@ -61,7 +61,10 @@ try {
   await configure({});
   assert.deepEqual(await hook(session, { JEV_SKILL_ROUTER_DISABLED: '1' }), {});
   assert.deepEqual(await hook({ hook_event_name: 'Stop', cwd: directory }), {});
-  assert.match((await hook({ hook_event_name: 'UserPromptSubmit', cwd: directory })).reason, /SKILLS_INPUT_INVALID/);
+  assert.match((await hook({ hook_event_name: 'UserPromptSubmit', transcript_path: join(directory, 'rollout.jsonl'), cwd: directory })).reason, /SKILLS_INPUT_INVALID/);
+  await assert.rejects(health());
+
+  assert.deepEqual(await hook({ hook_event_name: 'UserPromptSubmit', cwd: directory, prompt: 'Helper', transcript_path: null }), {});
   await assert.rejects(health());
 
   const concurrent = await Promise.all(Array.from({ length: 6 }, () => hook(session)));
@@ -77,7 +80,7 @@ try {
   assert.equal((await health()).pid, first.pid, 'Later hooks reuse the detached server');
   await stopChild(first.pid);
 
-  const input = { hook_event_name: 'UserPromptSubmit', cwd: directory, prompt: 'A test without an API key.' };
+  const input = { hook_event_name: 'UserPromptSubmit', transcript_path: join(directory, 'rollout.jsonl'), cwd: directory, prompt: 'A test without an API key.' };
   assert.match((await hook(input)).reason, /SKILLS_CODEX_UNAVAILABLE/);
   const restarted = await health();
   children.add(restarted.pid);
