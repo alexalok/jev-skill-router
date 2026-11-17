@@ -20,9 +20,13 @@ Set the following in your Codex config.toml, then use `/hooks` to review and tru
 include_instructions = false
 ```
 
-On **every prompt**, the hook checks the effective persisted config for the task directory. Unless it confirms this exact value, it blocks the prompt and reports why. Only an incompatible native setting produces the TOML fix; other errors identify what prevented verification. Unreadable router config, malformed input, and a missing Codex executable also block. If the desktop app cannot find Codex, set `codexBin` to its absolute path.
+On **every eligible prompt**, the hook checks the effective persisted config for the task directory. Unless it confirms this exact value, it blocks the prompt and reports why. Only an incompatible native setting produces the TOML fix; other errors identify what prevented verification. Unreadable router config, malformed input, and a missing Codex executable also block. If the desktop app cannot find Codex, set `codexBin` to its absolute path.
 
 Codex may still process the prompt if the hook is disabled, untrusted, missing Node, crashes, or exceeds its hook timeout. The hook cannot see transient caller overrides such as `-c skills.include_instructions=true`, `--profile`, or app-side settings. Set `JEV_SKILL_ROUTER_DISABLED=1` to bypass the hook, including its guard. Restore native skill instructions if you stop using the plugin.
+
+`UserPromptSubmit` is ignored when `transcript_path` is null or missing, or when the transcript's first `session_meta` line identifies a guardian review (`payload.thread_source: "guardian_review"`, with `payload.source.subagent.other: "guardian"` as a fallback). These internal threads return `{}` before config checks: no ranker, session cache, selection history, or dashboard startup. The native-instructions guard is deliberately skipped because these threads are outside skill routing.
+
+Only the transcript header is inspected (at most 256 KiB), never an app database. Unreadable, malformed, oversized, or unknown metadata preserves normal routing and its guard. Normal chats, subagents, side conversations, forks, automations, and `create_thread` chats remain eligible. `PreToolUse`, search, and compaction restore are unchanged.
 
 ## What reaches the model
 
