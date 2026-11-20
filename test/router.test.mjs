@@ -190,6 +190,27 @@ test('budget tiers, filtering and UTF-8 batching',async t=>{
   assert.equal(ranked.length,12); assert.equal(max,3);
 });
 
+test('MCP search input errors identify fields and show expected arguments', async t => {
+  const f = await fixture(t);
+  const cases = [
+    [{ cwd: f.cwd, query: 'find skills' }, [/missing required field "task_description"/i, /unknown field "query"/i]],
+    [{ cwd: f.cwd, task_description: 'task', extra: true }, [/unknown field "extra"/i]],
+    [{ cwd: 42, task_description: null }, [/cwd.*expected string.*got number/i, /task_description.*expected string.*got null/i]],
+    [[], [/arguments.*expected object.*got array/i]],
+    [{ cwd: 'relative', task_description: '  ' }, [/cwd.*absolute path/i, /task_description.*non-blank/i]],
+    [{ cwd: f.cwd, task_description: '中'.repeat(8001) }, [/24,000 UTF-8 bytes/]],
+  ];
+  for (const [args, problems] of cases) {
+    const request = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'search_skills', arguments: args } };
+    const [{ result }] = f.call(JSON.stringify(request), ['--mcp']);
+    assert.equal(result.isError, true);
+    const message = result.content[0].text;
+    assert.match(message, /^SKILLS_INPUT_INVALID/);
+    for (const problem of problems) assert.match(message, problem);
+    assert.match(message, /Expected arguments: .*"task_description".*"cwd"/);
+  }
+});
+
 test('MCP schema, paths, search threshold/limit, guard errors and history',async t=>{
   const f=await fixture(t), req=(id,method,params)=>JSON.stringify({jsonrpc:'2.0',id,method,params});
   const args={task_description:'Search task',cwd:f.cwd}, call=a=>req(3,'tools/call',{name:'search_skills',arguments:a});
