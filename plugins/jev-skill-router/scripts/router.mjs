@@ -8457,6 +8457,34 @@ var tool = {
   } }
 };
 var result = (text2, isError = false) => ({ content: [{ type: "text", text: text2 }], isError });
+function inputType(value) {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  if (value === void 0) return "missing";
+  return typeof value;
+}
+function inputProblems(args) {
+  if (!isObject(args)) return ["arguments: expected object, got " + inputType(args)];
+  const problems = [];
+  const { required, properties } = tool.inputSchema;
+  for (const field of required) {
+    if (!Object.hasOwn(args, field)) problems.push('Missing required field "' + field + '"');
+  }
+  for (const [field, value] of Object.entries(args)) {
+    if (!Object.hasOwn(properties, field)) {
+      problems.push("Unknown field " + JSON.stringify(field));
+    } else if (typeof value !== properties[field].type) {
+      problems.push(field + ": expected " + properties[field].type + ", got " + inputType(value));
+    }
+  }
+  if (typeof args.cwd === "string" && (!isAbsolute4(args.cwd) || args.cwd.includes("\0")))
+    problems.push("cwd must be an absolute path without NUL characters");
+  if (typeof args.task_description === "string") {
+    if (!args.task_description.trim()) problems.push("task_description must be non-blank");
+    if (Buffer.byteLength(args.task_description) > 24e3) problems.push("task_description must be at most 24,000 UTF-8 bytes");
+  }
+  return problems;
+}
 async function serve(search2, input = process.stdin, output = process.stdout) {
   const send = (obj) => output.write(JSON.stringify({ jsonrpc: "2.0", ...obj }) + "\n");
   async function dispatch(line) {
@@ -8480,8 +8508,15 @@ async function serve(search2, input = process.stdin, output = process.stdout) {
     if (method === "tools/call") {
       const args = params?.arguments;
       if (params?.name !== tool.name) return send({ id, error: { code: -32602, message: "Unknown tool" } });
-      if (!isObject(args) || Object.keys(args).some((k) => !["cwd", "task_description"].includes(k)) || typeof args.cwd !== "string" || !isAbsolute4(args.cwd) || args.cwd.includes("\0") || typeof args.task_description !== "string" || !args.task_description.trim() || Buffer.byteLength(args.task_description) > 24e3)
-        return send({ id, result: result("SKILLS_INPUT_INVALID", true) });
+      const problems = inputProblems(args);
+      if (problems.length) {
+        const text2 = [
+          "SKILLS_INPUT_INVALID",
+          ...problems,
+          'Expected arguments: {"task_description":"Describe the task","cwd":"/absolute/project/path"}'
+        ].join("\n");
+        return send({ id, result: result(text2, true) });
+      }
       try {
         return send({ id, result: result(await search2(args)) });
       } catch (error) {
